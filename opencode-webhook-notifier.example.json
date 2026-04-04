@@ -1,0 +1,74 @@
+{
+  "webhook": {
+    "enabled": true,
+    "targets": [
+      {
+        "type": "discord",
+        "url": "https://discord.com/api/webhooks/YOUR_WEBHOOK_ID/YOUR_WEBHOOK_TOKEN",
+        "username": "OpenCode Bot",
+        "avatarUrl": "https://example.com/opencode-avatar.png"
+      },
+      {
+        "type": "ntfy",
+        "url": "https://ntfy.sh/opencode-alerts",
+        "priority": 3,
+        "tags": ["opencode", "ai"],
+        "basicAuth": { "username": "admin", "password": "secret" }
+      },
+      {
+        "type": "gotify",
+        "url": "https://gotify.example.com/message",
+        "token": "YOUR_GOTIFY_APP_TOKEN",
+        "priority": 5
+      }
+    ],
+    "events": {
+      "permission": {
+        "color": 16750848
+      },
+      "error": {
+        "message": "CRITICAL ERROR: {sessionTitle}",
+        "color": 15548997,
+        "priority": 5,
+        "tags": ["error", "urgent"],
+        "gotifyPriority": 8
+      },
+      "complete": {
+        "color": 5763719
+      },
+      "plan_exit": {
+        "message": "Plan ready for review: {sessionTitle}",
+        "priority": 4,
+        "tags": ["plan"]
+      }
+    }
+  },
+  "showProjectName": true,
+  "showSessionTitle": true,
+  "suppressWhenFocused": true,
+  "enableOnDesktop": false,
+  "events": {
+    "permission": { "webhook": true, "command": true },
+    "complete": { "webhook": true, "command": true },
+    "subagent_complete": { "webhook": false, "command": true },
+    "error": { "webhook": true, "command": true },
+    "question": { "webhook": true, "command": true },
+    "user_cancelled": { "webhook": false, "command": true },
+    "plan_exit": { "webhook": true, "command": true }
+  },
+  "messages": {
+    "permission": "Session needs permission: {sessionTitle}",
+    "complete": "Session has finished: {sessionTitle}",
+    "subagent_complete": "Subagent task completed: {sessionTitle}",
+    "error": "Session encountered an error: {sessionTitle}",
+    "question": "Session has a question: {sessionTitle}",
+    "user_cancelled": "Session was cancelled by user: {sessionTitle}",
+    "plan_exit": "Plan ready for review: {sessionTitle}"
+  },
+  "command": {
+    "enabled": false,
+    "path": "/path/to/script.sh",
+    "args": ["--event", "{event}", "--message", "{message}"],
+    "minDuration": 0
+  }
+}

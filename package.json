@@ -1,0 +1,29 @@
+{
+  "name": "opencode-webhook-notifier",
+  "version": "1.0.1",
+  "description": "OpenCode plugin that sends webhook notifications (Discord, ntfy, Gotify) on permission, completion, and error events",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": [
+    "opencode",
+    "opencode-plugin",
+    "webhook",
+    "discord",
+    "ntfy",
+    "gotify",
+    "notifications"
+  ],
+  "devDependencies": {
+    "@opencode-ai/plugin": "^1.0.224",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.0.0"
+  },
+  "peerDependencies": {
+    "@opencode-ai/plugin": ">=1.0.0"
+  }
+}

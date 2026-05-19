@@ -1,0 +1,24 @@
+{
+  "webhook": {
+    "enabled": true,
+    "targets": [
+      { "type": "discord", "url": "https://discord.example/webhook" },
+      { "type": "ntfy", "url": "https://ntfy.sh/topic" }
+    ]
+  },
+  "showProjectName": true,
+  "showSessionTitle": true,
+  "events": {
+    "permission": { "webhook": true, "command": false },
+    "complete": false
+  },
+  "messages": {
+    "permission": "custom permission: {sessionTitle}"
+  },
+  "command": {
+    "enabled": true,
+    "path": "/tmp/notify.sh",
+    "args": ["--event", "{event}"],
+    "minDuration": 5
+  }
+}

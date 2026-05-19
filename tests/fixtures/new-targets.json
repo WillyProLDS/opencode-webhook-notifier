@@ -1,0 +1,11 @@
+{
+  "webhook": {
+    "targets": [
+      { "type": "telegram", "botToken": "TOKEN:ABC", "chatId": "@channel" },
+      { "type": "telegram", "botToken": "", "chatId": "@channel" },
+      { "type": "telegram", "botToken": "TOKEN" },
+      { "type": "generic", "url": "https://example.com/webhook" },
+      { "type": "generic", "url": "" }
+    ]
+  }
+}

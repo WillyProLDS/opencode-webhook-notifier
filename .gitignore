@@ -3,6 +3,7 @@ node_modules/
 
 # Build output
 dist/
+*.tsbuildinfo
 
 # Config backups
 *.json.bak
@@ -20,21 +21,51 @@ dist/
 # OS
 .DS_Store
 Thumbs.db
+Desktop.ini
+ehthumbs.db
 
 # Logs
 *.log
 npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
 logs/
 
 # Env files (may contain secrets)
 .env
-.env.local
-.env.*.local
+.env.*
+!.env.example
+
+# Secrets / credentials (prevent accidental leaks)
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+*.cer
+credentials.json
+service-account*.json
+secrets.json
+token.json
+.secrets/
 
 # Coverage / test output
 coverage/
 .nyc_output/
+.vitest-cache/
 
 # Temporary files
 *.tmp
 .cache/
+
+# Package manager
+.pnpm-store/
+.yarn/
+
+# Sisyphus / AI working files
+.sisyphus/
+.opencode/
+
+# Documentation artifacts (prevent plan/spec leaks)
+*.draft.md

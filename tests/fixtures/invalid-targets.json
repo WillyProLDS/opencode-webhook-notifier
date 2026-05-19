@@ -1,0 +1,12 @@
+{
+  "webhook": {
+    "targets": [
+      { "type": "discord", "url": "https://valid.example/webhook" },
+      { "type": "ntfy" },
+      { "url": "https://no-type.example" },
+      "not-an-object",
+      null,
+      { "type": "gotify", "url": "https://gotify.example/message", "token": "tok" }
+    ]
+  }
+}

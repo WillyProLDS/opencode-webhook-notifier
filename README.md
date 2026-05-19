@@ -1,6 +1,6 @@
 # opencode-webhook-notifier
 
-OpenCode plugin that sends webhook notifications (Discord, ntfy, Gotify) on permission, completion, error, and other events.
+OpenCode plugin that sends webhook notifications (Discord, ntfy, Gotify, Telegram, generic JSON) on permission, completion, error, and other events.
 
 ## What it does
 
@@ -14,7 +14,7 @@ Sends webhook notifications when:
 - **User cancelled** — session cancelled by user (ESC)
 - **Plan mode exited** — plan ready for review
 
-Supports **Discord**, **ntfy**, and **Gotify** simultaneously. All webhook sends are fire-and-forget — failures are logged but never crash the plugin.
+Supports **Discord**, **ntfy**, **Gotify**, **Telegram**, and **generic JSON** simultaneously. All webhook sends are fire-and-forget — failures retry with exponential backoff, and a circuit breaker isolates failing endpoints so one bad target never blocks the others.
 
 ## Quick Start
 
@@ -72,6 +72,7 @@ Copy `opencode-webhook-notifier.example.json` as a starting point.
 | `showSessionTitle` | `boolean` | `false` | Include `{sessionTitle}` in messages |
 | `suppressWhenFocused` | `boolean` | `true` | Skip notifications when terminal is focused |
 | `enableOnDesktop` | `boolean` | `false` | Run on Desktop/Web clients (not just CLI) |
+| `focusCacheMs` | `number` | `250` | How long focus-detection results are cached (per probe) |
 | `timeout` | `number` | `5` | Linux notification timeout (kept for compat) |
 
 ### Webhook configuration
@@ -115,18 +116,29 @@ Copy `opencode-webhook-notifier.example.json` as a starting point.
 
 ### Webhook target fields
 
-| Field | Discord | ntfy | Gotify | Description |
-|---|---|---|---|---|
-| `type` | `"discord"` | `"ntfy"` | `"gotify"` | Webhook type |
-| `url` | Webhook URL | `https://server/topic` | `https://server/message` | Endpoint URL |
-| `username` | Override sender name | — | — | Display name |
-| `avatarUrl` | Override avatar | — | — | Avatar image URL |
-| `topic` | — | Topic name | — | ntfy topic (extracted from URL if omitted) |
-| `priority` | — | 1–5 (optional) | 0–10 (optional) | Notification priority — only sent when configured |
-| `tags` | — | `string[]` (optional) | — | ntfy tags — only sent when configured |
-| `token` | — | — | App token | Gotify app token |
-| `headers` | `Record<string,string>` | Extra headers | Extra headers | Custom HTTP headers |
-| `basicAuth` | `{username, password}` | Basic auth | Basic auth | HTTP basic auth |
+| Field | Discord | ntfy | Gotify | Telegram | Generic | Description |
+|---|---|---|---|---|---|---|
+| `type` | `"discord"` | `"ntfy"` | `"gotify"` | `"telegram"` | `"generic"` | Webhook type |
+| `url` | Webhook URL | `https://server/topic` | `https://server/message` | — | Endpoint URL | Endpoint URL |
+| `botToken` | — | — | — | Bot token | — | Telegram bot token |
+| `chatId` | — | — | — | Chat ID or `@channel` | — | Telegram chat or channel |
+| `parseMode` | — | — | — | `MarkdownV2` / `HTML` / `Markdown` | — | Telegram parse mode (auto-escapes) |
+| `disableNotification` | — | — | — | `boolean` | — | Send silently |
+| `disableLinkPreview` | — | — | — | `boolean` | — | Skip auto-link previews |
+| `messageThreadId` | — | — | — | `number` | — | Forum/group thread ID |
+| `method` | — | — | — | — | `POST` (default), `PUT`, `PATCH` | HTTP method |
+| `bodyTemplate` | — | — | — | — | `string` or `object` | Body template with `{{placeholders}}` |
+| `bearer` | — | — | — | — | Token | `Authorization: Bearer …` |
+| `username` | Override sender name | — | — | — | — | Display name |
+| `avatarUrl` | Override avatar | — | — | — | — | Avatar image URL |
+| `topic` | — | Topic name | — | — | — | ntfy topic (extracted from URL if omitted) |
+| `priority` | — | 1–5 (optional) | 0–10 (optional) | — | — | Notification priority — only sent when configured |
+| `tags` | — | `string[]` (optional) | — | — | — | ntfy tags — only sent when configured |
+| `token` | — | — | App token | — | — | Gotify app token |
+| `headers` | `Record<string,string>` | Extra headers | Extra headers | Extra headers | Extra headers | Custom HTTP headers |
+| `basicAuth` | `{username, password}` | Basic auth | Basic auth | — | Basic auth | HTTP basic auth |
+| `retry` | `{maxAttempts?, initialDelayMs?, maxDelayMs?}` | same | same | same | same | Per-target retry override |
+| `circuitBreaker` | `{failureThreshold?, cooldownMs?}` | same | same | same | same | Per-target breaker override |
 
 ### Event configuration
 
@@ -205,6 +217,67 @@ All ntfy fields (`priority`, `tags`, `basicAuth`) are fully optional. A minimal 
 3. Copy the **app token**
 4. Set `"url"` to `https://your-gotify-server/message`
 5. Set `"token"` to the app token
+
+## Telegram Setup
+
+1. Create a bot with [@BotFather](https://t.me/BotFather), copy the bot token
+2. Get the chat ID: send a message to the bot, then visit `https://api.telegram.org/bot<TOKEN>/getUpdates`
+3. Configure:
+
+```json
+{
+  "type": "telegram",
+  "botToken": "123456:ABCDEF",
+  "chatId": "@your_channel",
+  "parseMode": "MarkdownV2"
+}
+```
+
+`parseMode` is optional. When set, the title and message are automatically escaped for that mode. Telegram caps text at 4096 characters; longer messages are truncated with an ellipsis.
+
+## Generic Webhook Setup
+
+For arbitrary HTTP endpoints (your own backend, Slack incoming webhooks, Pushover, etc.):
+
+```json
+{
+  "type": "generic",
+  "url": "https://example.com/webhooks/opencode",
+  "method": "POST",
+  "headers": { "X-Source": "opencode" },
+  "bearer": "secret-token",
+  "bodyTemplate": {
+    "text": "[{{event}}] {{title}}: {{message}}",
+    "context": {
+      "project": "{{projectName}}",
+      "session": "{{sessionTitle}}",
+      "turn": "{{turn}}"
+    }
+  }
+}
+```
+
+Without `bodyTemplate`, the default body is a flat JSON object: `{title, message, event, timestamp, turn, sessionTitle, agentName, projectName}`.
+
+Inside `bodyTemplate`, `{{placeholders}}` are substituted in any string value (including nested objects and arrays). Available: `title`, `message`, `event`, `timestamp`, `turn`, `sessionTitle`, `agentName`, `projectName`.
+
+## Reliability
+
+Each webhook target gets:
+
+- **Retry with exponential backoff** — default 3 attempts (500 ms → 1 s → 2 s, with jitter, capped at 30 s).
+- **Circuit breaker** — after 5 consecutive failures, the target is skipped for 60 seconds, then probed once. A success closes the circuit; another failure re-opens it.
+- **Independent isolation** — one failing target does not delay or fail any other target.
+
+Override per target via `retry` and `circuitBreaker` fields. Defaults are tuned for transient failures; override if your endpoint has tighter SLOs.
+
+## Logging
+
+Set `OPENCODE_WEBHOOK_NOTIFIER_LOG` to `debug`, `info`, `warn` (default), `error`, or `silent` to control structured stderr logging. Each line is a single JSON object with `ts`, `level`, `prefix`, `msg`, plus context fields. Useful for diagnosing webhook failures without polluting OpenCode logs.
+
+```bash
+OPENCODE_WEBHOOK_NOTIFIER_LOG=debug opencode
+```
 
 ## Focus Detection
 

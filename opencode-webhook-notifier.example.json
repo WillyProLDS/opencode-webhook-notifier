@@ -20,6 +20,29 @@
         "url": "https://gotify.example.com/message",
         "token": "YOUR_GOTIFY_APP_TOKEN",
         "priority": 5
+      },
+      {
+        "type": "telegram",
+        "botToken": "123456:ABCDEF",
+        "chatId": "@your_channel",
+        "parseMode": "MarkdownV2",
+        "disableLinkPreview": true
+      },
+      {
+        "type": "generic",
+        "url": "https://example.com/webhooks/opencode",
+        "method": "POST",
+        "bearer": "secret-token",
+        "bodyTemplate": {
+          "text": "[{{event}}] {{title}}: {{message}}",
+          "context": {
+            "project": "{{projectName}}",
+            "session": "{{sessionTitle}}",
+            "turn": "{{turn}}"
+          }
+        },
+        "retry": { "maxAttempts": 5, "initialDelayMs": 250, "maxDelayMs": 10000 },
+        "circuitBreaker": { "failureThreshold": 3, "cooldownMs": 30000 }
       }
     ],
     "events": {
@@ -47,6 +70,7 @@
   "showSessionTitle": true,
   "suppressWhenFocused": true,
   "enableOnDesktop": false,
+  "focusCacheMs": 250,
   "events": {
     "permission": { "webhook": true, "command": true },
     "complete": { "webhook": true, "command": true },

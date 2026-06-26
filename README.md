@@ -73,7 +73,7 @@ Copy `opencode-webhook-notifier.example.json` as a starting point.
 | `suppressWhenFocused` | `boolean` | `true` | Skip notifications when terminal is focused |
 | `enableOnDesktop` | `boolean` | `false` | Run on Desktop/Web clients (not just CLI) |
 | `focusCacheMs` | `number` | `250` | How long focus-detection results are cached (per probe) |
-| `timeout` | `number` | `5` | Linux notification timeout (kept for compat) |
+| `timeout` | `number` | `5` | HTTP request timeout in seconds for webhook sends (0 disables) |
 
 ### Webhook configuration
 
@@ -113,6 +113,8 @@ Copy `opencode-webhook-notifier.example.json` as a starting point.
   }
 }
 ```
+
+The `webhook.events` object accepts per-event overrides. Only known event types (`permission`, `complete`, `subagent_complete`, `error`, `question`, `user_cancelled`, `plan_exit`) are kept; unknown keys are silently filtered. Each override is validated individually — an invalid entry (e.g. `priority` as a string) is dropped without affecting other overrides.
 
 ### Webhook target fields
 
@@ -191,6 +193,10 @@ Placeholders: `{sessionTitle}`, `{agentName}`, `{projectName}`, `{timestamp}`, `
 
 Token substitution: `{event}`, `{message}`, `{sessionTitle}`, `{agentName}`, `{projectName}`, `{timestamp}`, `{turn}`.
 
+`minDuration` (seconds) skips the command for sessions that completed faster than the threshold — useful to avoid notification spam on sub-second turns. The elapsed time is measured from the last user message to session idle. Set to `0` (default) to always fire.
+
+For shell-invoked commands, prefer the `OC_*` environment variables over `{token}` placeholders — `$OC_MESSAGE`, `$OC_EVENT`, etc. are set on the child process and are immune to shell-injection via crafted message content. The `{token}` substitution splices values directly into `command.path`/`args`, which is safe for direct binary execution (no `shell: true`) but risky if the command itself invokes a shell (e.g. `sh -c 'echo {message}'`).
+
 ## Discord Setup
 
 1. Discord server → **Settings** → **Integrations** → **Webhooks** → **New Webhook**
@@ -233,7 +239,7 @@ All ntfy fields (`priority`, `tags`, `basicAuth`) are fully optional. A minimal 
 }
 ```
 
-`parseMode` is optional. When set, the title and message are automatically escaped for that mode. Telegram caps text at 4096 characters; longer messages are truncated with an ellipsis.
+`parseMode` is optional. When set, the title and message are automatically escaped for that mode. Telegram caps text at 4096 characters; longer messages are truncated with an ellipsis. Telegram has no numeric priority scale — setting an event override `priority: 0` maps to silent delivery (`disable_notification: true`). This differs from ntfy (1–5) and Gotify (0–10), where `0` is a valid priority value.
 
 ## Generic Webhook Setup
 
@@ -268,8 +274,10 @@ Each webhook target gets:
 - **Retry with exponential backoff** — default 3 attempts (500 ms → 1 s → 2 s, with jitter, capped at 30 s).
 - **Circuit breaker** — after 5 consecutive failures, the target is skipped for 60 seconds, then probed once. A success closes the circuit; another failure re-opens it.
 - **Independent isolation** — one failing target does not delay or fail any other target.
+- **HTTP request timeout** — each `fetch()` call is capped by the `timeout` config field (default 5 seconds → 5000 ms). A hung endpoint aborts and retries rather than blocking forever.
+- **Session-scoped debounce** — rapid events of the same type within the same session are coalesced into one webhook (1000 ms window). Different sessions are never coalesced — each gets its own notification.
 
-Override per target via `retry` and `circuitBreaker` fields. Defaults are tuned for transient failures; override if your endpoint has tighter SLOs.
+Override retry/breaker per target via `retry` and `circuitBreaker` fields. Override the global HTTP timeout via `timeout`. Defaults are tuned for transient failures; override if your endpoint has tighter SLOs.
 
 ## Logging
 
@@ -321,3 +329,26 @@ Remove-Item -Recurse -Force "$env:USERPROFILE\.cache\opencode\node_modules\openc
 ```
 
 Then restart OpenCode.
+
+## Security
+
+### Reporting a Vulnerability
+
+Report security issues via **GitHub Security Advisories** (private) or GitHub Issues if low-severity and non-exploitable. Do not open public issues for critical or exploitable bugs — use the private advisory flow so the fix can ship before disclosure.
+
+- **Acknowledgement:** within 48 hours.
+- **Critical fixes:** within 7 days of confirmation.
+- **Other severities:** best-effort within 30 days.
+
+### Supported Versions
+
+Only the **latest release** receives security updates. Upgrade before reporting.
+
+### Secrets Handling
+
+This plugin reads webhook URLs, bot tokens (Telegram), and app tokens (Gotify) from a JSON config file at `~/.config/opencode/opencode-webhook-notifier.json` (or a path set via `OPENCODE_WEBHOOK_NOTIFIER_CONFIG_PATH`).
+
+- Treat the config file as a secret. Restrict file permissions (`chmod 600`).
+- Do not commit config files containing live credentials to the repository.
+- Webhook URLs and bot tokens are sent only to their respective providers over HTTPS; they are never logged above `debug` level and never written to disk.
+- If a token may have leaked, rotate it at the provider immediately — do not wait for a plugin update.

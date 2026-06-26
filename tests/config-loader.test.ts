@@ -1,10 +1,11 @@
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getMessage, isEventCommandEnabled, isEventWebhookEnabled } from "../src/config/interpolate.js";
 import { loadConfig } from "../src/config/loader.js";
 import type { EventType } from "../src/config/schema.js";
+import type { Logger } from "../src/log/logger.js";
 
 const FIXTURES = join(__dirname, "fixtures");
 
@@ -156,5 +157,122 @@ describe("loadConfig", () => {
     const generics = config.webhook.targets.filter((t) => t.type === "generic");
     expect(generics).toHaveLength(1);
     expect(generics[0]).toMatchObject({ type: "generic", url: "https://example.com/webhook" });
+  });
+
+  function createMockLogger(): Logger & { calls: { msg: string; ctx?: Record<string, unknown> }[] } {
+    const calls: { msg: string; ctx?: Record<string, unknown> }[] = [];
+    const logger: Logger = {
+      debug: vi.fn(),
+      info: vi.fn(),
+      warn: vi.fn((msg: string, ctx?: Record<string, unknown>) => {
+        calls.push({ msg, ctx });
+      }),
+      error: vi.fn(),
+    };
+    return Object.assign(logger, { calls });
+  }
+
+  it("logs a warning when config file contains malformed JSON", () => {
+    pointConfigAt(join(FIXTURES, "malformed.json"));
+    const logger = createMockLogger();
+    const config = loadConfig(logger);
+
+    expect(config.webhook.enabled).toBe(true);
+    expect(config.webhook.targets).toEqual([]);
+    const warnCalls = logger.calls.filter((c) => c.msg.includes("malformed JSON"));
+    expect(warnCalls).toHaveLength(1);
+    expect(warnCalls[0]?.ctx).toMatchObject({ path: join(FIXTURES, "malformed.json") });
+  });
+
+  it("logs a warning for each rejected invalid target with reason", () => {
+    pointConfigAt(join(FIXTURES, "invalid-targets.json"));
+    const logger = createMockLogger();
+    const config = loadConfig(logger);
+
+    const urls = config.webhook.targets.map((t) => ("url" in t ? t.url : "(no-url)"));
+    expect(urls).toEqual(["https://valid.example/webhook", "https://gotify.example/message"]);
+
+    const targetWarnings = logger.calls.filter((c) => c.msg.includes("invalid webhook target rejected"));
+    expect(targetWarnings.length).toBeGreaterThanOrEqual(3);
+    for (const w of targetWarnings) {
+      expect(w.ctx).toBeDefined();
+      expect(w.ctx).toHaveProperty("index");
+      expect(w.ctx).toHaveProperty("reasons");
+    }
+  });
+
+  it("logs a warning when telegram target is missing botToken", () => {
+    pointConfigAt(join(FIXTURES, "new-targets.json"));
+    const logger = createMockLogger();
+    const config = loadConfig(logger);
+
+    const telegrams = config.webhook.targets.filter((t) => t.type === "telegram");
+    expect(telegrams).toHaveLength(1);
+
+    const targetWarnings = logger.calls.filter((c) => c.msg.includes("invalid webhook target rejected"));
+    const telegramWarnings = targetWarnings.filter((w) => w.ctx?.type === "telegram");
+    expect(telegramWarnings.length).toBeGreaterThanOrEqual(2);
+    const reasons = telegramWarnings.flatMap((w) => (w.ctx?.reasons as string[]) ?? []);
+    expect(reasons.some((r) => r.includes("botToken"))).toBe(true);
+  });
+
+  it("logs a warning when generic target has empty url", () => {
+    pointConfigAt(join(FIXTURES, "new-targets.json"));
+    const logger = createMockLogger();
+    const config = loadConfig(logger);
+
+    const generics = config.webhook.targets.filter((t) => t.type === "generic");
+    expect(generics).toHaveLength(1);
+
+    const targetWarnings = logger.calls.filter((c) => c.msg.includes("invalid webhook target rejected"));
+    const genericWarnings = targetWarnings.filter((w) => w.ctx?.type === "generic");
+    expect(genericWarnings).toHaveLength(1);
+    const reasons = genericWarnings.flatMap((w) => (w.ctx?.reasons as string[]) ?? []);
+    expect(reasons.some((r) => r.includes("non-empty string"))).toBe(true);
+  });
+
+  it("does not log anything when config file is missing", () => {
+    pointConfigAt(join(tempDir, "does-not-exist.json"));
+    const logger = createMockLogger();
+    const config = loadConfig(logger);
+
+    expect(config.webhook.enabled).toBe(true);
+    expect(logger.calls).toHaveLength(0);
+  });
+
+  describe("webhook event overrides validation", () => {
+    it("parses valid event overrides and filters unknown event types", () => {
+      pointConfigAt(join(FIXTURES, "webhook-events.json"));
+      const config = loadConfig();
+
+      expect(config.webhook.events).toBeDefined();
+      const events = config.webhook.events!;
+
+      // Known event types with valid overrides are kept
+      expect(events.error).toBeDefined();
+      expect(events.error?.message).toBe("CRITICAL: {sessionTitle}");
+      expect(events.error?.priority).toBe(5);
+      expect(events.error?.tags).toEqual(["urgent"]);
+      expect(events.error?.color).toBe(15548997);
+      expect(events.error?.gotifyPriority).toBe(8);
+
+      expect(events.permission).toBeDefined();
+      expect(events.permission?.message).toBe("Permission needed: {sessionTitle}");
+
+      // Unknown event type "invalid_event_type" is filtered out
+      expect((events as Record<string, unknown>).invalid_event_type).toBeUndefined();
+
+      // "complete" had an invalid override (priority as string, not number)
+      // Zod validation rejects it, so the whole entry is dropped
+      expect(events.complete).toBeUndefined();
+    });
+
+    it("returns undefined when no webhook events are configured", () => {
+      pointConfigAt(join(FIXTURES, "valid.json"));
+      const config = loadConfig();
+
+      // valid.json has no webhook.events key
+      expect(config.webhook.events).toBeUndefined();
+    });
   });
 });

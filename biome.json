@@ -28,15 +28,28 @@
     "rules": {
       "recommended": true,
       "suspicious": {
-        "noExplicitAny": "off"
+        "noExplicitAny": "error"
       },
       "style": {
         "useImportType": "warn",
-        "useNodejsImportProtocol": "warn"
+        "useNodejsImportProtocol": "warn",
+        "noNonNullAssertion": "warn"
       },
       "complexity": {
         "noBannedTypes": "error"
       }
     }
-  }
+  },
+  "overrides": [
+    {
+      "includes": ["tests/**/*.ts"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noNonNullAssertion": "off"
+          }
+        }
+      }
+    }
+  ]
 }

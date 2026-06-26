@@ -12,6 +12,7 @@ import { sendTelegram } from "./telegram.js";
 export interface WebhookSendOptions {
   overrides?: WebhookEventOverrides;
   context?: GenericContext;
+  sessionID?: string | null;
 }
 
 export interface WebhookSender {
@@ -31,12 +32,25 @@ export interface WebhookSenderOptions {
   debounceMs?: number;
   defaultRetry?: { maxAttempts?: number; initialDelayMs?: number; maxDelayMs?: number };
   defaultCircuit?: { failureThreshold?: number; cooldownMs?: number };
+  /** Per-request HTTP timeout in milliseconds. 0 or undefined disables. */
+  timeoutMs?: number;
+}
+
+/** Hash a token to a short non-reversible suffix for use as an identity key. */
+function hashSuffix(value: string): string {
+  let h = 0;
+  for (let i = 0; i < value.length; i++) {
+    h = ((h << 5) - h + value.charCodeAt(i)) | 0;
+  }
+  return (h >>> 0).toString(16).padStart(8, "0");
 }
 
 function targetIdentity(target: WebhookTarget): string {
   switch (target.type) {
     case "telegram":
-      return `telegram:${target.botToken}:${target.chatId}`;
+      // Include botToken hash so distinct bots targeting the same chatId
+      // get isolated circuit breakers and retry state.
+      return `telegram:${target.chatId}:${hashSuffix(target.botToken)}`;
     default:
       return `${target.type}:${target.url}`;
   }
@@ -47,25 +61,26 @@ async function dispatch(
   title: string,
   message: string,
   options: WebhookSendOptions,
+  timeoutMs?: number,
 ): Promise<void> {
   switch (target.type) {
     case "discord":
-      await sendDiscord(target, title, message, options.overrides);
+      await sendDiscord(target, title, message, options.overrides, timeoutMs);
       break;
     case "ntfy":
-      await sendNtfy(target, title, message, options.overrides);
+      await sendNtfy(target, title, message, options.overrides, timeoutMs);
       break;
     case "gotify":
-      await sendGotify(target, title, message, options.overrides);
+      await sendGotify(target, title, message, options.overrides, timeoutMs);
       break;
     case "telegram":
-      await sendTelegram(target, title, message, options.overrides);
+      await sendTelegram(target, title, message, options.overrides, timeoutMs);
       break;
     case "generic":
       if (!options.context) {
         throw new Error("Generic webhook requires context (event, timestamp, turn)");
       }
-      await sendGeneric(target, title, message, options.context, options.overrides);
+      await sendGeneric(target, title, message, options.context, options.overrides, timeoutMs);
       break;
     default: {
       const unknown = target as { type?: unknown };
@@ -79,6 +94,7 @@ export function createWebhookSender(options: WebhookSenderOptions = {}): Webhook
   const logger = options.logger;
   const ownsDebouncer = !options.debouncer;
   const breakers = new Map<string, CircuitBreaker>();
+  const timeoutMs = options.timeoutMs && options.timeoutMs > 0 ? options.timeoutMs : undefined;
 
   const defaultRetry = {
     maxAttempts: options.defaultRetry?.maxAttempts ?? 3,
@@ -125,7 +141,7 @@ export function createWebhookSender(options: WebhookSenderOptions = {}): Webhook
     };
 
     try {
-      await withRetry(() => dispatch(target, title, message, options), {
+      await withRetry(() => dispatch(target, title, message, options, timeoutMs), {
         maxAttempts: retry.maxAttempts,
         initialDelayMs: retry.initialDelayMs,
         maxDelayMs: retry.maxDelayMs,
@@ -153,7 +169,8 @@ export function createWebhookSender(options: WebhookSenderOptions = {}): Webhook
     send(targets, title, message, eventType, sendOptions) {
       if (!targets || targets.length === 0) return;
 
-      debouncer.schedule(`webhook-${eventType}`, async () => {
+      const key = `webhook-${eventType}-${sendOptions?.sessionID ?? "global"}`;
+      debouncer.schedule(key, async () => {
         await Promise.all(
           targets.map((target) => deliver(target, title, message, sendOptions ?? {}).catch(() => undefined)),
         );

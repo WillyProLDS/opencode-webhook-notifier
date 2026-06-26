@@ -1,5 +1,25 @@
 # Changelog
 
+## 2.0.1 — 2026-06
+
+### Fixed
+
+- **`command.minDuration` now functional**: `getElapsedSinceLastPrompt()` is wired into the `session.idle` handler, so `elapsedSeconds` is populated for `complete`/`subagent_complete` events. Previously the skip logic never fired because `elapsedSeconds` was always `undefined`.
+- **HTTP request timeout enforced**: all transports (Discord, ntfy, Gotify, Telegram, generic) now pass an `AbortSignal.timeout()` to `fetch()`, derived from the existing `timeout` config field (seconds → milliseconds). Previously no transport had a request timeout; a hung endpoint could block indefinitely.
+- **`webhook.events` cast removed**: the `as NotifierConfig["webhook"]["events"]` type assertion in the loader is replaced with `parseWebhookEvents()`, which validates each event override entry through `webhookEventOverridesSchema` and filters unknown event types. The `webhookConfigSchema.events` field is now `z.record(z.string(), z.unknown())` to allow per-entry validation rather than whole-record rejection.
+- **Telegram circuit-breaker isolation**: `targetIdentity()` for telegram targets now includes a hash of `botToken`, so distinct bots targeting the same `chatId` get isolated retry/circuit-breaker state.
+- **`pruneOlderThan` uses `cutoffMs` for sequence map**: `sessionIdleSequence` entries are now pruned by timestamp (via a new `sessionSequenceAt` map) instead of by timer presence, fixing a minor memory leak for dead sessions.
+- **Session-scoped debounce**: the webhook debounce key now includes `sessionID` (`webhook-${eventType}-${sessionID}`), so concurrent sessions no longer coalesce into a single notification. Same-session rapid events still debounce.
+
+### Changed
+
+- `timeout` config field (default `5`) now controls HTTP request timeout for webhook sends, not "Linux notification timeout". Documented in README.
+- Telegram `priority: 0` override now has an inline code comment documenting that it maps to silent delivery (`disable_notification: true`), which differs from ntfy (1–5) and Gotify (0–10) where 0 is a valid priority.
+
+### Added
+
+- 19 new tests covering HTTP timeout signal propagation, session-scoped debounce, `minDuration`/`elapsedSeconds` behavior, `parseWebhookEvents` validation, and `pruneOlderThan` timestamp-based pruning.
+
 ## 2.0.0 — 2026-05
 
 Major refactor and feature release. Core behavior is preserved end-to-end; configs from 1.x continue to work without changes.

@@ -69,6 +69,7 @@ export async function sendGeneric(
   message: string,
   ctx: GenericContext,
   _overrides?: WebhookEventOverrides,
+  timeoutMs?: number,
 ): Promise<void> {
   const method = target.method ?? "POST";
 
@@ -88,10 +89,12 @@ export async function sendGeneric(
       ? applyTemplate(target.bodyTemplate, ctx, title, message)
       : defaultBody(title, message, ctx);
 
+  const signal = timeoutMs && timeoutMs > 0 ? AbortSignal.timeout(timeoutMs) : undefined;
   const res = await fetch(target.url, {
     method,
     headers,
     body: JSON.stringify(body),
+    signal,
   });
 
   if (!res.ok) {

@@ -57,15 +57,23 @@ coverage/
 
 # Temporary files
 *.tmp
-.cache/
+*.cache/
+*.pid
+*.seed
 
 # Package manager
 .pnpm-store/
 .yarn/
+package-lock.json.bak
 
 # Sisyphus / AI working files
 .sisyphus/
 .opencode/
+.omp/
 
 # Documentation artifacts (prevent plan/spec leaks)
 *.draft.md
+
+# Local config (never commit live credentials)
+opencode-webhook-notifier.json
+opencode-webhook-notifier-state.json

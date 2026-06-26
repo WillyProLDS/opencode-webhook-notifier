@@ -84,6 +84,6 @@ describe("withRetry", () => {
     await promise;
 
     expect(onAttempt).toHaveBeenCalledTimes(1);
-    expect(onAttempt.mock.calls[0][0]).toBe(1);
+    expect(onAttempt.mock.calls[0]?.[0]).toBe(1);
   });
 });

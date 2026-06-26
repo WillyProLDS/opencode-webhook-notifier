@@ -1,4 +1,5 @@
 import { statSync } from "node:fs";
+import type { Logger } from "../log/logger.js";
 import { getConfigPath, loadConfig } from "./loader.js";
 import type { NotifierConfig } from "./schema.js";
 
@@ -9,6 +10,7 @@ export interface ConfigService {
 
 export interface ConfigServiceOptions {
   ttlMs?: number;
+  logger?: Logger;
 }
 
 interface CacheEntry {
@@ -32,7 +34,7 @@ export function createConfigService(options: ConfigServiceOptions = {}): ConfigS
 
   function refresh(): NotifierConfig {
     const path = getConfigPath();
-    const config = loadConfig();
+    const config = loadConfig(options.logger);
     cache = {
       config,
       expiresAt: Date.now() + ttlMs,

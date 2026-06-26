@@ -51,6 +51,7 @@ export async function sendTelegram(
   title: string,
   message: string,
   overrides?: WebhookEventOverrides,
+  timeoutMs?: number,
 ): Promise<void> {
   const url = `https://api.telegram.org/bot${target.botToken}/sendMessage`;
 
@@ -61,6 +62,10 @@ export async function sendTelegram(
 
   if (target.parseMode) payload.parse_mode = target.parseMode;
 
+  // Telegram has no numeric priority scale. An override priority of 0 is mapped
+  // to silent delivery (disable_notification: true). Any other value (or unset)
+  // delivers normally. This differs from ntfy (1–5) and gotify (0–10), where 0
+  // is a valid priority — document accordingly when sharing overrides across targets.
   const priority = overrides?.priority;
   const silent = target.disableNotification ?? (priority === 0 ? true : undefined);
   if (silent !== undefined) payload.disable_notification = silent;
@@ -68,7 +73,7 @@ export async function sendTelegram(
   if (target.disableLinkPreview) payload.link_preview_options = { is_disabled: true };
   if (typeof target.messageThreadId === "number") payload.message_thread_id = target.messageThreadId;
 
-  const res = await postJson(url, payload, target.headers);
+  const res = await postJson(url, payload, target.headers, undefined, "POST", timeoutMs);
   if (!res.ok) {
     const text = await res.text().catch(() => "");
     throw new Error(`Telegram webhook failed: ${res.status} ${res.statusText} ${text}`);

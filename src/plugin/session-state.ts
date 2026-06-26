@@ -20,8 +20,9 @@ export function createSessionState(options: SessionStateOptions = {}): SessionSt
   const idleDelayMs = options.idleDelayMs ?? DEFAULT_IDLE_DELAY_MS;
   const onIdleError = options.onIdleError ?? (() => undefined);
 
-  const pendingIdleTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  const pendingIdleTimers = new Map<string, NodeJS.Timeout>();
   const sessionIdleSequence = new Map<string, number>();
+  const sessionSequenceAt = new Map<string, number>();
   const sessionErrorSuppressionAt = new Map<string, number>();
   const sessionLastBusyAt = new Map<string, number>();
 
@@ -35,6 +36,7 @@ export function createSessionState(options: SessionStateOptions = {}): SessionSt
   function bumpSequence(sessionID: string): number {
     const next = (sessionIdleSequence.get(sessionID) ?? 0) + 1;
     sessionIdleSequence.set(sessionID, next);
+    sessionSequenceAt.set(sessionID, Date.now());
     return next;
   }
 
@@ -88,8 +90,11 @@ export function createSessionState(options: SessionStateOptions = {}): SessionSt
       clearPendingIdleTimer(sessionID);
     },
     pruneOlderThan(cutoffMs) {
-      for (const [id] of sessionIdleSequence) {
-        if (!pendingIdleTimers.has(id)) sessionIdleSequence.delete(id);
+      for (const [id, ts] of sessionSequenceAt) {
+        if (ts < cutoffMs) {
+          sessionIdleSequence.delete(id);
+          sessionSequenceAt.delete(id);
+        }
       }
       for (const [id, ts] of sessionErrorSuppressionAt) {
         if (ts < cutoffMs) sessionErrorSuppressionAt.delete(id);
@@ -102,6 +107,7 @@ export function createSessionState(options: SessionStateOptions = {}): SessionSt
       for (const timer of pendingIdleTimers.values()) clearTimeout(timer);
       pendingIdleTimers.clear();
       sessionIdleSequence.clear();
+      sessionSequenceAt.clear();
       sessionErrorSuppressionAt.clear();
       sessionLastBusyAt.clear();
     },

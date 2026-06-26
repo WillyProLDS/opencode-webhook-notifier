@@ -3,7 +3,12 @@ import type { Event } from "@opencode-ai/sdk";
 import type { NotifierConfig } from "../config/schema.js";
 import type { Logger } from "../log/logger.js";
 import type { Notifier } from "./notifier.js";
-import { extractAgentNameFromSessionTitle, getSessionInfo, shouldResolveAgentNameForEvent } from "./notifier.js";
+import {
+  extractAgentNameFromSessionTitle,
+  getElapsedSinceLastPrompt,
+  getSessionInfo,
+  shouldResolveAgentNameForEvent,
+} from "./notifier.js";
 import type { PermissionDedupe } from "./permission-dedupe.js";
 import type { SessionState } from "./session-state.js";
 
@@ -28,6 +33,7 @@ export function createEventRouter(deps: EventRouterDeps): EventRouter {
     eventType: Parameters<Notifier["notify"]>[0]["eventType"],
     sessionID: string | null,
     preloadedTitle?: string | null,
+    elapsedSeconds?: number | null,
   ): Promise<void> {
     const config = deps.config();
 
@@ -48,6 +54,7 @@ export function createEventRouter(deps: EventRouterDeps): EventRouter {
         sessionID,
         sessionTitle,
         agentName: agentName.length > 0 ? agentName : null,
+        elapsedSeconds: elapsedSeconds ?? null,
       },
       config,
     );
@@ -74,7 +81,8 @@ export function createEventRouter(deps: EventRouterDeps): EventRouter {
           deps.sessionState.scheduleIdle(sessionID, async () => {
             const info = await getSessionInfo(deps.client, sessionID);
             const eventType = info.isChild ? "subagent_complete" : "complete";
-            await dispatch(eventType, sessionID, info.title);
+            const elapsed = config.command.minDuration ? await getElapsedSinceLastPrompt(deps.client, sessionID) : null;
+            await dispatch(eventType, sessionID, info.title, elapsed);
           });
         } else {
           await deps.notifier.notify(

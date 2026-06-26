@@ -1,8 +1,11 @@
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import type { Logger } from "../log/logger.js";
+import { noopLogger } from "../log/logger.js";
 import { DEFAULT_CONFIG } from "./defaults.js";
-import type { CommandConfig, EventConfig, NotifierConfig, WebhookTarget } from "./schema.js";
+import type { EventType, NotifierConfig, WebhookEventOverrides } from "./schema.js";
+import { eventConfigSchema, rawConfigSchema, webhookEventOverridesSchema, webhookTargetSchema } from "./validator.js";
 
 export function getConfigPath(): string {
   if (process.env.OPENCODE_WEBHOOK_NOTIFIER_CONFIG_PATH) {
@@ -13,145 +16,164 @@ export function getConfigPath(): string {
 
 function parseEventConfig(
   userEvent: boolean | { webhook?: boolean; command?: boolean } | undefined,
-  defaultConfig: EventConfig,
-): EventConfig {
-  if (userEvent === undefined) {
-    return defaultConfig;
-  }
-
-  if (typeof userEvent === "boolean") {
-    return {
-      webhook: userEvent,
-      command: userEvent,
-    };
-  }
-
-  return {
-    webhook: userEvent.webhook ?? defaultConfig.webhook,
-    command: userEvent.command ?? defaultConfig.command,
-  };
+  defaultConfig: { webhook: boolean; command: boolean },
+): { webhook: boolean; command: boolean } {
+  if (userEvent === undefined) return defaultConfig;
+  const result = eventConfigSchema.safeParse(userEvent);
+  if (result.success) return result.data;
+  return defaultConfig;
 }
 
-function isValidTarget(value: unknown): value is WebhookTarget {
-  if (!value || typeof value !== "object") return false;
-  const obj = value as Record<string, unknown>;
-  if (typeof obj.type !== "string") return false;
-
-  switch (obj.type) {
-    case "discord":
-    case "ntfy":
-    case "gotify":
-    case "generic":
-      return typeof obj.url === "string" && obj.url.length > 0;
-    case "telegram":
-      return (
-        typeof obj.botToken === "string" &&
-        obj.botToken.length > 0 &&
-        (typeof obj.chatId === "string" || typeof obj.chatId === "number")
-      );
-    default:
-      return false;
+function parseCommand(userCommand: Record<string, unknown> | undefined, logger: Logger): NotifierConfig["command"] {
+  if (!userCommand) return DEFAULT_CONFIG.command;
+  const result = rawConfigSchema.shape.command.safeParse(userCommand);
+  if (!result.success) {
+    for (const issue of result.error.issues) {
+      logger.warn("config validation error in command", {
+        path: issue.path.join("."),
+        message: issue.message,
+      });
+    }
+    return DEFAULT_CONFIG.command;
   }
-}
-
-function parseCommand(userCommand: Record<string, unknown> | undefined): CommandConfig {
-  const value = userCommand ?? {};
-  const argsValue = value.args;
-  const args = Array.isArray(argsValue) ? argsValue.filter((arg): arg is string => typeof arg === "string") : undefined;
-
-  const minDurationValue = value.minDuration;
-  const minDuration =
-    typeof minDurationValue === "number" && Number.isFinite(minDurationValue) && minDurationValue > 0
-      ? minDurationValue
-      : 0;
-
+  const { enabled, path, args, minDuration } = result.data ?? {};
+  const validMinDuration =
+    typeof minDuration === "number" && Number.isFinite(minDuration) && minDuration >= 0 ? minDuration : 0;
   return {
-    enabled: typeof value.enabled === "boolean" ? value.enabled : DEFAULT_CONFIG.command.enabled,
-    path: typeof value.path === "string" ? value.path : DEFAULT_CONFIG.command.path,
+    enabled: enabled ?? DEFAULT_CONFIG.command.enabled,
+    path: path ?? DEFAULT_CONFIG.command.path,
     args,
-    minDuration,
+    minDuration: validMinDuration,
   };
 }
 
-export function loadConfig(): NotifierConfig {
+function parseTargets(rawTargets: unknown[], logger: Logger): NotifierConfig["webhook"]["targets"] {
+  const valid: NotifierConfig["webhook"]["targets"] = [];
+  for (let i = 0; i < rawTargets.length; i++) {
+    const target = rawTargets[i];
+    const result = webhookTargetSchema.safeParse(target);
+    if (result.success) {
+      valid.push(result.data);
+    } else {
+      const pathParts = result.error.issues.map((iss) => iss.path.join(".")).filter(Boolean);
+      const messages = result.error.issues.map((iss) => iss.message);
+      const typeHint =
+        target && typeof target === "object" && "type" in target
+          ? String((target as Record<string, unknown>).type)
+          : "unknown";
+      logger.warn("invalid webhook target rejected", {
+        index: i,
+        type: typeHint,
+        fields: pathParts.length > 0 ? pathParts : undefined,
+        reasons: messages,
+      });
+    }
+  }
+  return valid;
+}
+
+const KNOWN_EVENT_TYPES = [
+  "permission",
+  "complete",
+  "subagent_complete",
+  "error",
+  "question",
+  "user_cancelled",
+  "plan_exit",
+] as const;
+
+function parseWebhookEvents(raw: Record<string, unknown> | undefined): NotifierConfig["webhook"]["events"] {
+  if (!raw) return undefined;
+  const result: Partial<Record<EventType, WebhookEventOverrides>> = {};
+  for (const key of KNOWN_EVENT_TYPES) {
+    const entry = raw[key];
+    if (entry === undefined) continue;
+    const parsed = webhookEventOverridesSchema.safeParse(entry);
+    if (parsed.success && parsed.data !== undefined) {
+      result[key] = parsed.data;
+    }
+  }
+  return Object.keys(result).length > 0 ? result : undefined;
+}
+
+export function loadConfig(logger?: Logger): NotifierConfig {
+  const log = logger ?? noopLogger;
   const configPath = getConfigPath();
 
-  if (!existsSync(configPath)) {
-    return DEFAULT_CONFIG;
-  }
+  if (!existsSync(configPath)) return DEFAULT_CONFIG;
 
-  let userConfig: Record<string, unknown>;
+  let fileContent: string;
   try {
-    const fileContent = readFileSync(configPath, "utf-8");
-    const parsed = JSON.parse(fileContent);
-    if (!parsed || typeof parsed !== "object") {
-      return DEFAULT_CONFIG;
-    }
-    userConfig = parsed as Record<string, unknown>;
-  } catch {
+    fileContent = readFileSync(configPath, "utf-8");
+  } catch (err) {
+    log.warn("failed to read config file, using defaults", { path: configPath, error: String(err) });
     return DEFAULT_CONFIG;
   }
 
-  const userWebhook = (userConfig.webhook as Record<string, unknown> | undefined) ?? {};
-  const userTargets = Array.isArray(userWebhook.targets) ? (userWebhook.targets as unknown[]) : [];
-  const webhookTargets = userTargets.filter(isValidTarget);
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(fileContent);
+  } catch (err) {
+    log.warn("config file contains malformed JSON, using defaults", {
+      path: configPath,
+      error: String(err),
+    });
+    return DEFAULT_CONFIG;
+  }
 
-  const userEvents = (userConfig.events as Record<string, unknown> | undefined) ?? {};
-  const userMessages = (userConfig.messages as Record<string, unknown> | undefined) ?? {};
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    log.warn("config file root is not a JSON object, using defaults", { path: configPath });
+    return DEFAULT_CONFIG;
+  }
 
-  const focusCacheMs =
-    typeof userConfig.focusCacheMs === "number" && userConfig.focusCacheMs >= 0
-      ? userConfig.focusCacheMs
-      : DEFAULT_CONFIG.focusCacheMs;
+  const rawResult = rawConfigSchema.safeParse(parsed);
+  if (!rawResult.success) {
+    for (const issue of rawResult.error.issues) {
+      log.warn("config validation error", {
+        path: issue.path.join("."),
+        message: issue.message,
+      });
+    }
+    return DEFAULT_CONFIG;
+  }
+  const userConfig = rawResult.data;
+
+  const userWebhook = userConfig.webhook ?? {};
+  const userEvents = userConfig.events ?? {};
+  const userMessages = userConfig.messages ?? {};
+
+  const webhookTargets = parseTargets(userWebhook.targets ?? [], log);
 
   return {
-    timeout:
-      typeof userConfig.timeout === "number" && userConfig.timeout > 0 ? userConfig.timeout : DEFAULT_CONFIG.timeout,
-    showProjectName:
-      typeof userConfig.showProjectName === "boolean" ? userConfig.showProjectName : DEFAULT_CONFIG.showProjectName,
-    showSessionTitle:
-      typeof userConfig.showSessionTitle === "boolean" ? userConfig.showSessionTitle : DEFAULT_CONFIG.showSessionTitle,
-    suppressWhenFocused:
-      typeof userConfig.suppressWhenFocused === "boolean"
-        ? userConfig.suppressWhenFocused
-        : DEFAULT_CONFIG.suppressWhenFocused,
-    enableOnDesktop:
-      typeof userConfig.enableOnDesktop === "boolean" ? userConfig.enableOnDesktop : DEFAULT_CONFIG.enableOnDesktop,
-    focusCacheMs,
-    command: parseCommand(userConfig.command as Record<string, unknown> | undefined),
+    timeout: userConfig.timeout ?? DEFAULT_CONFIG.timeout,
+    showProjectName: userConfig.showProjectName ?? DEFAULT_CONFIG.showProjectName,
+    showSessionTitle: userConfig.showSessionTitle ?? DEFAULT_CONFIG.showSessionTitle,
+    suppressWhenFocused: userConfig.suppressWhenFocused ?? DEFAULT_CONFIG.suppressWhenFocused,
+    enableOnDesktop: userConfig.enableOnDesktop ?? DEFAULT_CONFIG.enableOnDesktop,
+    focusCacheMs: userConfig.focusCacheMs ?? DEFAULT_CONFIG.focusCacheMs,
+    command: parseCommand(userConfig.command, log),
     events: {
-      permission: parseEventConfig(userEvents.permission as never, DEFAULT_CONFIG.events.permission),
-      complete: parseEventConfig(userEvents.complete as never, DEFAULT_CONFIG.events.complete),
-      subagent_complete: parseEventConfig(
-        userEvents.subagent_complete as never,
-        DEFAULT_CONFIG.events.subagent_complete,
-      ),
-      error: parseEventConfig(userEvents.error as never, DEFAULT_CONFIG.events.error),
-      question: parseEventConfig(userEvents.question as never, DEFAULT_CONFIG.events.question),
-      user_cancelled: parseEventConfig(userEvents.user_cancelled as never, DEFAULT_CONFIG.events.user_cancelled),
-      plan_exit: parseEventConfig(userEvents.plan_exit as never, DEFAULT_CONFIG.events.plan_exit),
+      permission: parseEventConfig(userEvents.permission, DEFAULT_CONFIG.events.permission),
+      complete: parseEventConfig(userEvents.complete, DEFAULT_CONFIG.events.complete),
+      subagent_complete: parseEventConfig(userEvents.subagent_complete, DEFAULT_CONFIG.events.subagent_complete),
+      error: parseEventConfig(userEvents.error, DEFAULT_CONFIG.events.error),
+      question: parseEventConfig(userEvents.question, DEFAULT_CONFIG.events.question),
+      user_cancelled: parseEventConfig(userEvents.user_cancelled, DEFAULT_CONFIG.events.user_cancelled),
+      plan_exit: parseEventConfig(userEvents.plan_exit, DEFAULT_CONFIG.events.plan_exit),
     },
     messages: {
-      permission:
-        typeof userMessages.permission === "string" ? userMessages.permission : DEFAULT_CONFIG.messages.permission,
-      complete: typeof userMessages.complete === "string" ? userMessages.complete : DEFAULT_CONFIG.messages.complete,
-      subagent_complete:
-        typeof userMessages.subagent_complete === "string"
-          ? userMessages.subagent_complete
-          : DEFAULT_CONFIG.messages.subagent_complete,
-      error: typeof userMessages.error === "string" ? userMessages.error : DEFAULT_CONFIG.messages.error,
-      question: typeof userMessages.question === "string" ? userMessages.question : DEFAULT_CONFIG.messages.question,
-      user_cancelled:
-        typeof userMessages.user_cancelled === "string"
-          ? userMessages.user_cancelled
-          : DEFAULT_CONFIG.messages.user_cancelled,
-      plan_exit:
-        typeof userMessages.plan_exit === "string" ? userMessages.plan_exit : DEFAULT_CONFIG.messages.plan_exit,
+      permission: userMessages.permission ?? DEFAULT_CONFIG.messages.permission,
+      complete: userMessages.complete ?? DEFAULT_CONFIG.messages.complete,
+      subagent_complete: userMessages.subagent_complete ?? DEFAULT_CONFIG.messages.subagent_complete,
+      error: userMessages.error ?? DEFAULT_CONFIG.messages.error,
+      question: userMessages.question ?? DEFAULT_CONFIG.messages.question,
+      user_cancelled: userMessages.user_cancelled ?? DEFAULT_CONFIG.messages.user_cancelled,
+      plan_exit: userMessages.plan_exit ?? DEFAULT_CONFIG.messages.plan_exit,
     },
     webhook: {
-      enabled: typeof userWebhook.enabled === "boolean" ? userWebhook.enabled : DEFAULT_CONFIG.webhook.enabled,
+      enabled: userWebhook.enabled ?? DEFAULT_CONFIG.webhook.enabled,
       targets: webhookTargets,
-      events: (userWebhook.events as NotifierConfig["webhook"]["events"]) ?? DEFAULT_CONFIG.webhook.events,
+      events: parseWebhookEvents(userWebhook.events) ?? DEFAULT_CONFIG.webhook.events,
     },
   };
 }

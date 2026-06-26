@@ -17,7 +17,7 @@ const MEMORY_CLEANUP_INTERVAL_MS = 5 * 60 * 1000;
 export const WebhookNotifierPlugin: Plugin = async ({ client, directory }) => {
   const logger = createLogger();
   const lifecycle = createLifecycle();
-  const configService = createConfigService();
+  const configService = createConfigService({ logger });
 
   const clientEnv = process.env.OPENCODE_CLIENT;
   if (clientEnv && clientEnv !== "cli") {
@@ -31,7 +31,7 @@ export const WebhookNotifierPlugin: Plugin = async ({ client, directory }) => {
   const initialConfig = configService.get();
   const focus = createFocusDetector({ cacheMs: initialConfig.focusCacheMs });
   const turnCounter = createTurnCounter();
-  const webhookSender = createWebhookSender({ logger });
+  const webhookSender = createWebhookSender({ logger, timeoutMs: initialConfig.timeout * 1000 });
   const permissionDedupe = createPermissionDedupe();
   const sessionState = createSessionState({
     onIdleError: (error) => logger.warn("idle handler failed", { error: String(error) }),

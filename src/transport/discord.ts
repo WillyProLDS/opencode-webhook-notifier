@@ -8,6 +8,7 @@ export async function sendDiscord(
   title: string,
   message: string,
   overrides?: WebhookEventOverrides,
+  timeoutMs?: number,
 ): Promise<void> {
   const embedColor = overrides?.color ?? DISCORD_DEFAULT_COLOR;
 
@@ -27,7 +28,7 @@ export async function sendDiscord(
   if (target.username) payload.username = target.username;
   if (target.avatarUrl) payload.avatar_url = target.avatarUrl;
 
-  const res = await postJson(target.url, payload, target.headers, target.basicAuth);
+  const res = await postJson(target.url, payload, target.headers, target.basicAuth, "POST", timeoutMs);
   if (!res.ok) {
     const text = await res.text().catch(() => "");
     throw new Error(`Discord webhook failed: ${res.status} ${res.statusText} ${text}`);

@@ -5,6 +5,7 @@ export async function sendNtfy(
   title: string,
   message: string,
   overrides?: WebhookEventOverrides,
+  timeoutMs?: number,
 ): Promise<void> {
   const headers: Record<string, string> = {
     ...target.headers,
@@ -22,7 +23,8 @@ export async function sendNtfy(
     headers.Authorization = `Basic ${credentials}`;
   }
 
-  const res = await fetch(target.url, { method: "POST", headers, body: message });
+  const signal = timeoutMs && timeoutMs > 0 ? AbortSignal.timeout(timeoutMs) : undefined;
+  const res = await fetch(target.url, { method: "POST", headers, body: message, signal });
   if (!res.ok) {
     const text = await res.text().catch(() => "");
     throw new Error(`ntfy webhook failed: ${res.status} ${res.statusText} ${text}`);

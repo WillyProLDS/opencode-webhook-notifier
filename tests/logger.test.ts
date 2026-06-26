@@ -25,8 +25,8 @@ describe("createLogger", () => {
     logger.error("e");
 
     expect(lines).toHaveLength(2);
-    expect(JSON.parse(lines[0]).level).toBe("warn");
-    expect(JSON.parse(lines[1]).level).toBe("error");
+    expect(JSON.parse(lines[0] ?? "").level).toBe("warn");
+    expect(JSON.parse(lines[1] ?? "").level).toBe("error");
   });
 
   it("respects env var override (debug)", () => {
@@ -58,7 +58,7 @@ describe("createLogger", () => {
 
     logger.info("hello", { foo: "bar" });
 
-    const parsed = JSON.parse(lines[0]);
+    const parsed = JSON.parse(lines[0] ?? "");
     expect(parsed.level).toBe("info");
     expect(parsed.prefix).toBe("test");
     expect(parsed.msg).toBe("hello");

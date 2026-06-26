@@ -79,6 +79,7 @@ export function createNotifier(deps: NotifierDeps): Notifier {
             agentName: ctx.agentName ?? null,
             projectName: ctx.projectName,
           },
+          sessionID: ctx.sessionID ?? null,
         });
       }
 
@@ -155,7 +156,7 @@ const AGENT_NAME_PATTERN = /\s*\(@([^\s)]+)\s+subagent\)\s*$/;
 export function extractAgentNameFromSessionTitle(sessionTitle: unknown): string {
   if (typeof sessionTitle !== "string" || sessionTitle.length === 0) return "";
   const match = sessionTitle.match(AGENT_NAME_PATTERN);
-  return match ? match[1] : "";
+  return match ? (match[1] ?? "") : "";
 }
 
 export function shouldResolveAgentNameForEvent(config: NotifierConfig, eventType: EventType): boolean {

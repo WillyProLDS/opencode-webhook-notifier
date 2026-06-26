@@ -100,7 +100,7 @@ describe("WebhookSender reliability", () => {
     await vi.runAllTimersAsync();
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(fetchMock.mock.calls[0][0]).toBe("https://good.example/hook");
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("https://good.example/hook");
     sender.dispose();
   });
 

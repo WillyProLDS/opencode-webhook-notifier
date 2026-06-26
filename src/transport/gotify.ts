@@ -8,6 +8,7 @@ export async function sendGotify(
   title: string,
   message: string,
   overrides?: WebhookEventOverrides,
+  timeoutMs?: number,
 ): Promise<void> {
   let url = target.url;
   if (target.token && !url.includes("token=")) {
@@ -21,7 +22,7 @@ export async function sendGotify(
     priority: overrides?.gotifyPriority ?? target.priority ?? GOTIFY_DEFAULT_PRIORITY,
   };
 
-  const res = await postJson(url, payload, target.headers, target.basicAuth);
+  const res = await postJson(url, payload, target.headers, target.basicAuth, "POST", timeoutMs);
   if (!res.ok) {
     const text = await res.text().catch(() => "");
     throw new Error(`Gotify webhook failed: ${res.status} ${res.statusText} ${text}`);

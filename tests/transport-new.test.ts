@@ -40,7 +40,7 @@ describe("Telegram transport", () => {
     });
     await vi.advanceTimersByTimeAsync(FLUSH);
 
-    const [url, init] = fetchMock.mock.calls[0];
+    const [url, init] = fetchMock.mock.calls[0]!;
     expect(url).toBe("https://api.telegram.org/botTOKEN:123/sendMessage");
     const body = JSON.parse(init.body as string);
     expect(body.chat_id).toBe("@channel");
@@ -62,7 +62,7 @@ describe("Telegram transport", () => {
     );
     await vi.advanceTimersByTimeAsync(FLUSH);
 
-    const body = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+    const body = JSON.parse(fetchMock.mock.calls[0]![1].body as string);
     expect(body.parse_mode).toBe("MarkdownV2");
     expect(body.text).toContain("\\.");
     expect(body.text).toContain("\\!");
@@ -78,7 +78,7 @@ describe("Telegram transport", () => {
     });
     await vi.advanceTimersByTimeAsync(FLUSH);
 
-    const body = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+    const body = JSON.parse(fetchMock.mock.calls[0]![1].body as string);
     expect(body.text).toContain("&amp;");
     expect(body.text).toContain("&lt;script&gt;");
     expect(body.text).toContain("<b>");
@@ -94,7 +94,7 @@ describe("Telegram transport", () => {
     });
     await vi.advanceTimersByTimeAsync(FLUSH);
 
-    const body = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+    const body = JSON.parse(fetchMock.mock.calls[0]![1].body as string);
     expect(body.text.length).toBe(4096);
     expect(body.text.endsWith("…")).toBe(true);
   });
@@ -120,7 +120,7 @@ describe("Telegram transport", () => {
     );
     await vi.advanceTimersByTimeAsync(FLUSH);
 
-    const body = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+    const body = JSON.parse(fetchMock.mock.calls[0]![1].body as string);
     expect(body.message_thread_id).toBe(99);
     expect(body.link_preview_options).toEqual({ is_disabled: true });
   });
@@ -135,7 +135,7 @@ describe("Telegram transport", () => {
     });
     await vi.advanceTimersByTimeAsync(FLUSH);
 
-    const body = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+    const body = JSON.parse(fetchMock.mock.calls[0]![1].body as string);
     expect(body.disable_notification).toBe(true);
   });
 });
@@ -165,7 +165,7 @@ describe("Generic transport", () => {
     });
     await vi.advanceTimersByTimeAsync(FLUSH);
 
-    const [url, init] = fetchMock.mock.calls[0];
+    const [url, init] = fetchMock.mock.calls[0]!;
     expect(url).toBe("https://example.com/hook");
     expect(init.method).toBe("POST");
     const body = JSON.parse(init.body as string);
@@ -201,7 +201,7 @@ describe("Generic transport", () => {
     );
     await vi.advanceTimersByTimeAsync(FLUSH);
 
-    const body = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+    const body = JSON.parse(fetchMock.mock.calls[0]![1].body as string);
     expect(body.text).toBe("[complete] Done: All good");
     expect(body.meta.project).toBe("demo");
     expect(body.meta.turn).toBe("42");
@@ -216,7 +216,7 @@ describe("Generic transport", () => {
     });
     await vi.advanceTimersByTimeAsync(FLUSH);
 
-    expect(fetchMock.mock.calls[0][1].headers.Authorization).toBe("Bearer secret123");
+    expect(fetchMock.mock.calls[0]![1].headers.Authorization).toBe("Bearer secret123");
   });
 
   it("sends Authorization Basic header when basicAuth is set", async () => {
@@ -238,7 +238,7 @@ describe("Generic transport", () => {
     );
     await vi.advanceTimersByTimeAsync(FLUSH);
 
-    expect(fetchMock.mock.calls[0][1].headers.Authorization).toBe(`Basic ${btoa("u:p")}`);
+    expect(fetchMock.mock.calls[0]![1].headers.Authorization).toBe(`Basic ${btoa("u:p")}`);
   });
 
   it("custom headers passthrough", async () => {
@@ -254,7 +254,7 @@ describe("Generic transport", () => {
     );
     await vi.advanceTimersByTimeAsync(FLUSH);
 
-    expect(fetchMock.mock.calls[0][1].headers["X-Source"]).toBe("kiro");
+    expect(fetchMock.mock.calls[0]![1].headers["X-Source"]).toBe("kiro");
   });
 
   it("supports method=PUT", async () => {
@@ -266,6 +266,6 @@ describe("Generic transport", () => {
     });
     await vi.advanceTimersByTimeAsync(FLUSH);
 
-    expect(fetchMock.mock.calls[0][1].method).toBe("PUT");
+    expect(fetchMock.mock.calls[0]![1].method).toBe("PUT");
   });
 });

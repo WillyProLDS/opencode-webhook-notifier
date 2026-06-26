@@ -40,7 +40,7 @@ describe("WebhookSender", () => {
       await vi.advanceTimersByTimeAsync(FLUSH);
 
       expect(fetchMock).toHaveBeenCalledTimes(1);
-      const [url, init] = fetchMock.mock.calls[0];
+      const [url, init] = fetchMock.mock.calls[0]!;
       expect(url).toBe("https://discord.example/hook");
       expect(init.method).toBe("POST");
       expect(init.headers["Content-Type"]).toBe("application/json");
@@ -74,7 +74,7 @@ describe("WebhookSender", () => {
       );
       await vi.advanceTimersByTimeAsync(FLUSH);
 
-      const body = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+      const body = JSON.parse(fetchMock.mock.calls[0]![1].body as string);
       expect(body.username).toBe("Bot");
       expect(body.avatar_url).toBe("https://example.com/a.png");
     });
@@ -86,7 +86,7 @@ describe("WebhookSender", () => {
       sender.send([{ type: "discord", url: "https://x" }], "T", "M", "error", { overrides: { color: 0xff0000 } });
       await vi.advanceTimersByTimeAsync(FLUSH);
 
-      const body = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+      const body = JSON.parse(fetchMock.mock.calls[0]![1].body as string);
       expect(body.embeds[0].color).toBe(0xff0000);
     });
   });
@@ -99,7 +99,7 @@ describe("WebhookSender", () => {
       sender.send([{ type: "ntfy", url: "https://ntfy.sh/topic" }], "Title here", "Body here", "complete");
       await vi.advanceTimersByTimeAsync(FLUSH);
 
-      const [, init] = fetchMock.mock.calls[0];
+      const [, init] = fetchMock.mock.calls[0]!;
       expect(init.method).toBe("POST");
       expect(init.body).toBe("Body here");
       expect(init.headers.Title).toBe("Title here");
@@ -114,7 +114,7 @@ describe("WebhookSender", () => {
       sender.send([{ type: "ntfy", url: "https://ntfy.sh/topic", priority: 4 }], "T", "M", "permission");
       await vi.advanceTimersByTimeAsync(FLUSH);
 
-      expect(fetchMock.mock.calls[0][1].headers.Priority).toBe("4");
+      expect(fetchMock.mock.calls[0]![1].headers.Priority).toBe("4");
     });
 
     it("sends Tags header when set", async () => {
@@ -124,7 +124,7 @@ describe("WebhookSender", () => {
       sender.send([{ type: "ntfy", url: "https://ntfy.sh/topic", tags: ["urgent", "x"] }], "T", "M", "error");
       await vi.advanceTimersByTimeAsync(FLUSH);
 
-      expect(fetchMock.mock.calls[0][1].headers.Tags).toBe("urgent,x");
+      expect(fetchMock.mock.calls[0]![1].headers.Tags).toBe("urgent,x");
     });
 
     it("event override priority/tags wins over target defaults", async () => {
@@ -136,7 +136,7 @@ describe("WebhookSender", () => {
       });
       await vi.advanceTimersByTimeAsync(FLUSH);
 
-      const headers = fetchMock.mock.calls[0][1].headers;
+      const headers = fetchMock.mock.calls[0]![1].headers;
       expect(headers.Priority).toBe("5");
       expect(headers.Tags).toBe("urgent");
     });
@@ -159,7 +159,7 @@ describe("WebhookSender", () => {
       );
       await vi.advanceTimersByTimeAsync(FLUSH);
 
-      expect(fetchMock.mock.calls[0][1].headers.Authorization).toBe(`Basic ${btoa("user:pass")}`);
+      expect(fetchMock.mock.calls[0]![1].headers.Authorization).toBe(`Basic ${btoa("user:pass")}`);
     });
   });
 
@@ -171,7 +171,7 @@ describe("WebhookSender", () => {
       sender.send([{ type: "gotify", url: "https://gotify.example/message", token: "abc 123" }], "T", "M", "complete");
       await vi.advanceTimersByTimeAsync(FLUSH);
 
-      expect(fetchMock.mock.calls[0][0]).toBe("https://gotify.example/message?token=abc%20123");
+      expect(fetchMock.mock.calls[0]![0]).toBe("https://gotify.example/message?token=abc%20123");
     });
 
     it("does not double-append token already in URL", async () => {
@@ -186,7 +186,7 @@ describe("WebhookSender", () => {
       );
       await vi.advanceTimersByTimeAsync(FLUSH);
 
-      expect(fetchMock.mock.calls[0][0]).toBe("https://gotify.example/message?token=existing");
+      expect(fetchMock.mock.calls[0]![0]).toBe("https://gotify.example/message?token=existing");
     });
 
     it("uses default priority 5 and per-event gotifyPriority override", async () => {
@@ -195,14 +195,14 @@ describe("WebhookSender", () => {
 
       sender.send([{ type: "gotify", url: "https://gotify.example/message" }], "T", "M", "complete");
       await vi.advanceTimersByTimeAsync(FLUSH);
-      const body1 = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+      const body1 = JSON.parse(fetchMock.mock.calls[0]![1].body as string);
       expect(body1.priority).toBe(5);
 
       sender.send([{ type: "gotify", url: "https://gotify.example/message" }], "T", "M", "error", {
         overrides: { gotifyPriority: 8 },
       });
       await vi.advanceTimersByTimeAsync(FLUSH);
-      const body2 = JSON.parse(fetchMock.mock.calls[1][1].body as string);
+      const body2 = JSON.parse(fetchMock.mock.calls[1]![1].body as string);
       expect(body2.priority).toBe(8);
     });
   });
@@ -222,7 +222,7 @@ describe("WebhookSender", () => {
       await vi.advanceTimersByTimeAsync(FLUSH);
 
       expect(fetchMock).toHaveBeenCalledTimes(1);
-      const body = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+      const body = JSON.parse(fetchMock.mock.calls[0]![1].body as string);
       expect(body.embeds[0].title).toBe("T3");
     });
 
@@ -243,7 +243,7 @@ describe("WebhookSender", () => {
       await vi.advanceTimersByTimeAsync(FLUSH);
 
       expect(fetchMock).toHaveBeenCalledTimes(3);
-      const urls = fetchMock.mock.calls.map((c) => c[0]).sort();
+      const urls = fetchMock.mock.calls.map((c) => c[0]!).sort();
       expect(urls).toEqual([
         "https://discord.example/hook",
         "https://gotify.example/message?token=t",

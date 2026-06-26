@@ -1,0 +1,1 @@
+{"webhook": {"enabled": true, "targets": [], "events": {"error": {"message": "CRITICAL: {sessionTitle}", "priority": 5, "tags": ["urgent"], "color": 15548997, "gotifyPriority": 8}, "permission": {"message": "Permission needed: {sessionTitle}"}, "invalid_event_type": {"message": "should be filtered out"}, "complete": {"priority": "not-a-number"}}}}

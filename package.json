@@ -1,7 +1,7 @@
 {
   "name": "opencode-webhook-notifier",
   "version": "2.0.0",
-  "description": "OpenCode plugin that sends webhook notifications (Discord, ntfy, Gotify) on permission, completion, and error events",
+  "description": "OpenCode plugin that sends webhook notifications (Discord, ntfy, Gotify, Telegram, generic HTTP) on permission, completion, error, and other events",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -12,7 +12,8 @@
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "lint": "biome check src tests",
-    "format": "biome format --write src tests"
+    "format": "biome format --write src tests",
+    "prepublishOnly": "npm run lint && npm run typecheck && npm test"
   },
   "keywords": [
     "opencode",
@@ -21,8 +22,14 @@
     "discord",
     "ntfy",
     "gotify",
+    "telegram",
     "notifications"
   ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "packageManager": "npm@11.13.0",
   "devDependencies": {
     "@biomejs/biome": "^2.4.15",
     "@opencode-ai/plugin": "^1.0.224",
@@ -34,5 +41,8 @@
   },
   "peerDependencies": {
     "@opencode-ai/plugin": ">=1.0.0"
+  },
+  "dependencies": {
+    "zod": "^4.4.3"
   }
 }

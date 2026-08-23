@@ -1,4 +1,4 @@
-import type { EventType, WebhookEventOverrides, WebhookTarget } from "../config/schema.js";
+import type { EventType, PermissionDetails, WebhookEventOverrides, WebhookTarget } from "../config/schema.js";
 import type { Logger } from "../log/logger.js";
 import { type CircuitBreaker, createCircuitBreaker } from "../util/circuit-breaker.js";
 import { createDebouncer, type KeyedDebouncer } from "../util/debounce.js";
@@ -7,12 +7,14 @@ import { sendDiscord } from "./discord.js";
 import { type GenericContext, sendGeneric } from "./generic.js";
 import { sendGotify } from "./gotify.js";
 import { sendNtfy } from "./ntfy.js";
-import { sendTelegram } from "./telegram.js";
+import { sendTelegram, TelegramApiError } from "./telegram.js";
+import { createTelegramRateLimiter, type TelegramRateLimiter } from "./telegram-rate-limiter.js";
 
 export interface WebhookSendOptions {
   overrides?: WebhookEventOverrides;
   context?: GenericContext;
   sessionID?: string | null;
+  permission?: PermissionDetails | null;
 }
 
 export interface WebhookSender {
@@ -30,6 +32,7 @@ export interface WebhookSenderOptions {
   logger?: Logger;
   debouncer?: KeyedDebouncer;
   debounceMs?: number;
+  telegramRateLimiter?: TelegramRateLimiter;
   defaultRetry?: { maxAttempts?: number; initialDelayMs?: number; maxDelayMs?: number };
   defaultCircuit?: { failureThreshold?: number; cooldownMs?: number };
   /** Per-request HTTP timeout in milliseconds. 0 or undefined disables. */
@@ -62,6 +65,7 @@ async function dispatch(
   message: string,
   options: WebhookSendOptions,
   timeoutMs?: number,
+  rateLimiter?: TelegramRateLimiter,
 ): Promise<void> {
   switch (target.type) {
     case "discord":
@@ -74,7 +78,19 @@ async function dispatch(
       await sendGotify(target, title, message, options.overrides, timeoutMs);
       break;
     case "telegram":
-      await sendTelegram(target, title, message, options.overrides, timeoutMs);
+      if (rateLimiter) {
+        await rateLimiter.schedule(target.botToken, target.chatId, () =>
+          sendTelegram(target, title, message, options.overrides, timeoutMs, {
+            sessionID: options.sessionID ?? null,
+            permission: options.permission ?? null,
+          }),
+        );
+      } else {
+        await sendTelegram(target, title, message, options.overrides, timeoutMs, {
+          sessionID: options.sessionID ?? null,
+          permission: options.permission ?? null,
+        });
+      }
       break;
     case "generic":
       if (!options.context) {
@@ -93,6 +109,8 @@ export function createWebhookSender(options: WebhookSenderOptions = {}): Webhook
   const debouncer = options.debouncer ?? createDebouncer(options.debounceMs ?? 1000);
   const logger = options.logger;
   const ownsDebouncer = !options.debouncer;
+  const telegramRateLimiter = options.telegramRateLimiter ?? createTelegramRateLimiter();
+  const ownsRateLimiter = !options.telegramRateLimiter;
   const breakers = new Map<string, CircuitBreaker>();
   const timeoutMs = options.timeoutMs && options.timeoutMs > 0 ? options.timeoutMs : undefined;
 
@@ -141,16 +159,30 @@ export function createWebhookSender(options: WebhookSenderOptions = {}): Webhook
     };
 
     try {
-      await withRetry(() => dispatch(target, title, message, options, timeoutMs), {
+      await withRetry(() => dispatch(target, title, message, options, timeoutMs, telegramRateLimiter), {
         maxAttempts: retry.maxAttempts,
         initialDelayMs: retry.initialDelayMs,
         maxDelayMs: retry.maxDelayMs,
+        shouldRetry: (error) => {
+          if (error instanceof TelegramApiError) {
+            return error.isRetryable;
+          }
+          return true;
+        },
+        getRetryDelay: (error) => {
+          if (error instanceof TelegramApiError && typeof error.retryAfterSeconds === "number") {
+            return error.retryAfterSeconds * 1000;
+          }
+          return undefined;
+        },
         onAttempt: (attempt, error) => {
           logger?.warn("webhook attempt failed", {
             target: targetIdentity(target),
             type: target.type,
             attempt,
             error: String(error),
+            status: error instanceof TelegramApiError ? error.status : undefined,
+            retryAfterSeconds: error instanceof TelegramApiError ? error.retryAfterSeconds : undefined,
           });
         },
       });
@@ -178,6 +210,7 @@ export function createWebhookSender(options: WebhookSenderOptions = {}): Webhook
     },
     dispose() {
       if (ownsDebouncer) debouncer.cancelAll();
+      if (ownsRateLimiter) telegramRateLimiter.clear();
     },
   };
 }

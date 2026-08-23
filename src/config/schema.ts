@@ -99,6 +99,15 @@ export interface EventConfig {
   command: boolean;
 }
 
+export interface PermissionDetails {
+  id?: string | null;
+  permission?: string | null;
+  patterns?: string[] | null;
+  always?: string[] | null;
+  metadata?: Record<string, unknown> | null;
+  title?: string | null;
+}
+
 export interface MessageContext {
   sessionTitle?: string | null;
   agentName?: string | null;

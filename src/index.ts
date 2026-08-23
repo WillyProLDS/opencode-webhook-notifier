@@ -6,11 +6,13 @@ import { createFocusDetector } from "./focus/index.js";
 import { createLogger } from "./log/logger.js";
 import { createEventRouter } from "./plugin/event-router.js";
 import { createLifecycle } from "./plugin/lifecycle.js";
-import { createNotifier } from "./plugin/notifier.js";
+import { createNotifier, extractAgentNameFromSessionTitle, getSessionInfo } from "./plugin/notifier.js";
 import { createPermissionDedupe } from "./plugin/permission-dedupe.js";
+import { extractPermissionDetails } from "./plugin/permission-helper.js";
 import { createSessionState } from "./plugin/session-state.js";
 import { createTurnCounter } from "./plugin/turn-counter.js";
 import { createWebhookSender } from "./transport/send.js";
+import { createTelegramReceiver } from "./transport/telegram-receiver.js";
 
 const MEMORY_CLEANUP_INTERVAL_MS = 5 * 60 * 1000;
 
@@ -32,11 +34,19 @@ export const WebhookNotifierPlugin: Plugin = async ({ client, directory }) => {
   const focus = createFocusDetector({ cacheMs: initialConfig.focusCacheMs });
   const turnCounter = createTurnCounter();
   const webhookSender = createWebhookSender({ logger, timeoutMs: initialConfig.timeout * 1000 });
+  const telegramReceiver = createTelegramReceiver({
+    client,
+    config: () => configService.get(),
+    logger,
+  });
+  telegramReceiver.start();
+
   const permissionDedupe = createPermissionDedupe();
   const sessionState = createSessionState({
     onIdleError: (error) => logger.warn("idle handler failed", { error: String(error) }),
   });
 
+  lifecycle.register(() => telegramReceiver.stop());
   lifecycle.register(() => webhookSender.dispose());
   lifecycle.register(() => sessionState.dispose());
 
@@ -76,11 +86,24 @@ export const WebhookNotifierPlugin: Plugin = async ({ client, directory }) => {
         logger.error("event router failed", { error: String(error) });
       }
     },
-    "permission.ask": async (_input: Permission) => {
-      if (!permissionDedupe.shouldSuppress(null)) {
+    "permission.ask": async (input: Permission) => {
+      const sessionID = input?.sessionID ?? null;
+      if (!permissionDedupe.shouldSuppress(sessionID)) {
+        const permDetails = extractPermissionDetails(input as unknown as Record<string, unknown>);
+        let sessionTitle: string | null = null;
+        const config = configService.get();
+        if (sessionID && config.showSessionTitle) {
+          const info = await getSessionInfo(client, sessionID);
+          sessionTitle = info.title;
+        }
+        const agentName = extractAgentNameFromSessionTitle(sessionTitle);
         await notifier.notify({
           eventType: "permission",
           projectName,
+          sessionID,
+          sessionTitle,
+          agentName: agentName.length > 0 ? agentName : null,
+          permission: permDetails,
         });
       }
     },

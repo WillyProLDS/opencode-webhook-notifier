@@ -138,6 +138,112 @@ describe("Telegram transport", () => {
     const body = JSON.parse(fetchMock.mock.calls[0]![1].body as string);
     expect(body.disable_notification).toBe(true);
   });
+
+  it("retries with backoff on 429 with parameters.retry_after", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            ok: false,
+            error_code: 429,
+            description: "Too Many Requests: retry after 2",
+            parameters: { retry_after: 2 },
+          }),
+          { status: 429, statusText: "Too Many Requests", headers: { "Content-Type": "application/json" } },
+        ),
+      )
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true, result: {} }), { status: 200 }));
+    globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch;
+
+    sender.send([{ type: "telegram", botToken: "T", chatId: 1 }], "T", "M", "complete", {
+      context: baseContext,
+    });
+
+    await vi.advanceTimersByTimeAsync(FLUSH);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    // Advance 2 seconds for retry_after
+    await vi.advanceTimersByTimeAsync(2000);
+    await vi.runAllTimersAsync();
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("falls back to unformatted text when Telegram returns 400 with can't parse entities", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            ok: false,
+            error_code: 400,
+            description: "Bad Request: can't parse entities in message text: unexpected end tag",
+          }),
+          { status: 400, statusText: "Bad Request", headers: { "Content-Type": "application/json" } },
+        ),
+      )
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true, result: {} }), { status: 200 }));
+    globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch;
+
+    sender.send(
+      [{ type: "telegram", botToken: "T", chatId: 1, parseMode: "MarkdownV2" }],
+      "Unescaped",
+      "Bad * text",
+      "complete",
+      { context: baseContext },
+    );
+
+    await vi.advanceTimersByTimeAsync(FLUSH);
+    await vi.runAllTimersAsync();
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    // Second request should have stripped parse_mode
+    const secondCallBody = JSON.parse(fetchMock.mock.calls[1]![1].body as string);
+    expect(secondCallBody.parse_mode).toBeUndefined();
+  });
+
+  it("does not retry permanent 401 unauthorized error", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          ok: false,
+          error_code: 401,
+          description: "Unauthorized",
+        }),
+        { status: 401, statusText: "Unauthorized", headers: { "Content-Type": "application/json" } },
+      ),
+    );
+    globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch;
+
+    sender.send([{ type: "telegram", botToken: "T_INVALID", chatId: 1 }], "T", "M", "complete", {
+      context: baseContext,
+    });
+
+    await vi.advanceTimersByTimeAsync(FLUSH);
+    await vi.runAllTimersAsync();
+
+    // Should only attempt once, not retry 3 times
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("handles multiple concurrent telegram messages without dropping", async () => {
+    const fetchMock = mockFetchOk();
+    globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch;
+
+    const targets = [
+      { type: "telegram" as const, botToken: "BOT_MULTI", chatId: "chat_A" },
+      { type: "telegram" as const, botToken: "BOT_MULTI", chatId: "chat_B" },
+    ];
+
+    sender.send(targets, "Title", "Message", "complete", { context: baseContext });
+
+    await vi.advanceTimersByTimeAsync(FLUSH);
+    await vi.advanceTimersByTimeAsync(100);
+    await vi.runAllTimersAsync();
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
 });
 
 describe("Generic transport", () => {

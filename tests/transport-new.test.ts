@@ -244,6 +244,41 @@ describe("Telegram transport", () => {
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
+
+  it("queues consecutive permission requests and delivers both with pacing", async () => {
+    const fetchMock = mockFetchOk();
+    globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch;
+
+    const target = { type: "telegram" as const, botToken: "BOT_QUEUE", chatId: "chat_1" };
+
+    // Permission 1: utils.js
+    sender.send([target], "OpenCode", "Permission 1", "permission", {
+      sessionID: "ses_1",
+      permission: { id: "p_1", permission: "bash", patterns: ["node utils.js"] },
+    });
+
+    // Permission 2: for loop (fired immediately after)
+    sender.send([target], "OpenCode", "Permission 2", "permission", {
+      sessionID: "ses_1",
+      permission: { id: "p_2", permission: "bash", patterns: ["for file in ..."] },
+    });
+
+    // Permission 1 is dispatched immediately
+    await vi.advanceTimersByTimeAsync(10);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const body1 = JSON.parse(fetchMock.mock.calls[0]![1].body as string);
+    expect(body1.text).toContain("node utils.js");
+
+    // Advance 500ms (still pacing before 1000ms)
+    await vi.advanceTimersByTimeAsync(500);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    // Advance remaining 500ms (1000ms total interval)
+    await vi.advanceTimersByTimeAsync(500);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const body2 = JSON.parse(fetchMock.mock.calls[1]![1].body as string);
+    expect(body2.text).toContain("for file in ...");
+  });
 });
 
 describe("Generic transport", () => {

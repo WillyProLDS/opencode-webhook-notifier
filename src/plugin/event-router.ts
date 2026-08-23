@@ -71,8 +71,8 @@ export function createEventRouter(deps: EventRouterDeps): EventRouter {
       if (PERMISSION_EVENT_TYPES.has(observedType)) {
         const properties = (event.properties ?? {}) as Record<string, unknown>;
         const sessionID = typeof properties?.sessionID === "string" ? properties.sessionID : null;
-        if (!deps.permissionDedupe.shouldSuppress(sessionID)) {
-          const permission = extractPermissionDetails(properties);
+        const permission = extractPermissionDetails(properties);
+        if (!deps.permissionDedupe.shouldSuppress(sessionID, permission)) {
           await dispatch("permission", sessionID, null, null, permission);
         }
         return;

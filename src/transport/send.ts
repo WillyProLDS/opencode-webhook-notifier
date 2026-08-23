@@ -201,6 +201,15 @@ export function createWebhookSender(options: WebhookSenderOptions = {}): Webhook
     send(targets, title, message, eventType, sendOptions) {
       if (!targets || targets.length === 0) return;
 
+      // Permission requests require individual interactive approvals.
+      // Deliver them without debouncing so the rate limiter can queue and pace them safely in FIFO order.
+      if (eventType === "permission") {
+        void Promise.all(
+          targets.map((target) => deliver(target, title, message, sendOptions ?? {}).catch(() => undefined)),
+        );
+        return;
+      }
+
       const key = `webhook-${eventType}-${sendOptions?.sessionID ?? "global"}`;
       debouncer.schedule(key, async () => {
         await Promise.all(

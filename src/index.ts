@@ -88,8 +88,8 @@ export const WebhookNotifierPlugin: Plugin = async ({ client, directory }) => {
     },
     "permission.ask": async (input: Permission) => {
       const sessionID = input?.sessionID ?? null;
-      if (!permissionDedupe.shouldSuppress(sessionID)) {
-        const permDetails = extractPermissionDetails(input as unknown as Record<string, unknown>);
+      const permDetails = extractPermissionDetails(input as unknown as Record<string, unknown>);
+      if (!permissionDedupe.shouldSuppress(sessionID, permDetails)) {
         let sessionTitle: string | null = null;
         const config = configService.get();
         if (sessionID && config.showSessionTitle) {

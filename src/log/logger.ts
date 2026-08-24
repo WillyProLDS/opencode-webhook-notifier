@@ -1,3 +1,6 @@
+import { appendFileSync, mkdirSync } from "node:fs";
+import { dirname } from "node:path";
+
 export type LogLevel = "debug" | "info" | "warn" | "error" | "silent";
 
 export interface Logger {
@@ -25,16 +28,37 @@ function parseLevel(value: string | undefined, fallback: LogLevel): LogLevel {
 export interface LoggerOptions {
   level?: LogLevel;
   envVar?: string;
+  logFileEnvVar?: string;
+  logFile?: string;
   prefix?: string;
   sink?: (line: string) => void;
 }
 
+function createFileSink(filePath: string): (line: string) => void {
+  try {
+    mkdirSync(dirname(filePath), { recursive: true });
+  } catch {
+    // Ignore directory creation failure
+  }
+  return (line: string) => {
+    try {
+      appendFileSync(filePath, `${line}\n`, "utf8");
+    } catch {
+      // Ignore file append errors to prevent crashing plugin
+    }
+  };
+}
+
 export function createLogger(options: LoggerOptions = {}): Logger {
   const envName = options.envVar ?? "OPENCODE_WEBHOOK_NOTIFIER_LOG";
+  const logFileEnv = options.logFileEnvVar ?? "OPENCODE_WEBHOOK_NOTIFIER_LOG_FILE";
   const level = parseLevel(process.env[envName], options.level ?? "warn");
   const minRank = LEVEL_RANK[level];
   const prefix = options.prefix ?? "webhook-notifier";
-  const sink = options.sink ?? ((line: string) => process.stderr.write(`${line}\n`));
+
+  const targetFile = options.logFile ?? process.env[logFileEnv];
+  const sink =
+    options.sink ?? (targetFile ? createFileSink(targetFile) : (line: string) => process.stderr.write(`${line}\n`));
 
   function emit(target: LogLevel, msg: string, ctx?: Record<string, unknown>): void {
     if (LEVEL_RANK[target] < minRank) return;

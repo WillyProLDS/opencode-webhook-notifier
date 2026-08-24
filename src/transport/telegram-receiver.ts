@@ -228,6 +228,11 @@ export function createTelegramReceiver(deps: TelegramReceiverDeps): TelegramRece
           } else if (res.status === 401 || res.status === 404) {
             deps.logger.error("Telegram botToken unauthorized or invalid", { status: res.status });
             delayMs = 60_000;
+          } else if (res.status === 409) {
+            deps.logger.debug("Telegram getUpdates conflict (409), another session is polling", {
+              status: res.status,
+            });
+            delayMs = 30_000;
           } else {
             deps.logger.warn("Telegram getUpdates returned non-ok", { status: res.status });
           }

@@ -281,10 +281,12 @@ Override retry/breaker per target via `retry` and `circuitBreaker` fields. Overr
 
 ## Logging
 
-Set `OPENCODE_WEBHOOK_NOTIFIER_LOG` to `debug`, `info`, `warn` (default), `error`, or `silent` to control structured stderr logging. Each line is a single JSON object with `ts`, `level`, `prefix`, `msg`, plus context fields. Useful for diagnosing webhook failures without polluting OpenCode logs.
+Set `OPENCODE_WEBHOOK_NOTIFIER_LOG` to `debug`, `info`, `warn` (default), `error`, or `silent` to control structured stderr logging. Each line is a single JSON object with `ts`, `level`, `prefix`, `msg`, plus context fields.
+
+To avoid polluting the OpenCode terminal interface while debugging, you can direct logs to a file using `OPENCODE_WEBHOOK_NOTIFIER_LOG_FILE`:
 
 ```bash
-OPENCODE_WEBHOOK_NOTIFIER_LOG=debug opencode
+OPENCODE_WEBHOOK_NOTIFIER_LOG=debug OPENCODE_WEBHOOK_NOTIFIER_LOG_FILE=/tmp/opencode-notifier.log opencode
 ```
 
 ## Focus Detection

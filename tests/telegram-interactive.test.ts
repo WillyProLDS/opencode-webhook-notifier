@@ -318,4 +318,84 @@ describe("Telegram Receiver (Long Polling & Callbacks)", () => {
       expect.objectContaining({ status: 429 }),
     );
   });
+
+  it("handles 409 conflict in getUpdates and logs debug without warning", async () => {
+    const clientMock = {
+      postSessionIdPermissionsPermissionId: vi.fn(),
+    };
+
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          ok: false,
+          error_code: 409,
+          description:
+            "Conflict: terminated by other getUpdates request; make sure that only one bot instance is running",
+        }),
+        { status: 409, statusText: "Conflict", headers: { "Content-Type": "application/json" } },
+      ),
+    );
+    globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch;
+
+    const mockConfig: NotifierConfig = {
+      timeout: 5,
+      showProjectName: true,
+      showSessionTitle: true,
+      suppressWhenFocused: false,
+      enableOnDesktop: false,
+      focusCacheMs: 250,
+      command: { enabled: false, path: "" },
+      events: {
+        permission: { webhook: true, command: true },
+        complete: { webhook: true, command: true },
+        subagent_complete: { webhook: false, command: true },
+        error: { webhook: true, command: true },
+        question: { webhook: true, command: true },
+        user_cancelled: { webhook: false, command: true },
+        plan_exit: { webhook: true, command: true },
+      },
+      messages: {
+        permission: "perm",
+        complete: "comp",
+        subagent_complete: "sub",
+        error: "err",
+        question: "q",
+        user_cancelled: "canc",
+        plan_exit: "plan",
+      },
+      webhook: {
+        enabled: true,
+        targets: [
+          {
+            type: "telegram",
+            botToken: "TEST_BOT_TOKEN",
+            chatId: 12345,
+          },
+        ],
+      },
+    };
+
+    const loggerMock = {
+      debug: vi.fn(),
+      info: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+    };
+
+    const receiver = createTelegramReceiver({
+      client: clientMock as unknown as PluginInput["client"],
+      config: () => mockConfig,
+      logger: loggerMock,
+    });
+
+    receiver.start();
+    await new Promise((r) => setTimeout(r, 20));
+    receiver.stop();
+
+    expect(loggerMock.debug).toHaveBeenCalledWith(
+      "Telegram getUpdates conflict (409), another session is polling",
+      expect.objectContaining({ status: 409 }),
+    );
+    expect(loggerMock.warn).not.toHaveBeenCalled();
+  });
 });

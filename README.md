@@ -1,12 +1,12 @@
 # opencode-webhook-notifier
 
-OpenCode plugin that sends webhook notifications (Discord, ntfy, Gotify, Telegram, generic JSON) on permission, completion, error, and other events.
+OpenCode plugin that sends webhook notifications (Discord, ntfy, Gotify, Telegram, generic JSON) on permission, completion, error, and other events. Supports interactive permission approval via Telegram inline buttons.
 
 ## What it does
 
 Sends webhook notifications when:
 
-- **Permission requested** — AI asks for file/command access
+- **Permission requested** — AI asks for file/command access (with interactive Telegram inline approval buttons)
 - **Session completed** — session goes idle
 - **Subagent completed** — spawned agent finishes
 - **Error occurred** — session hit an error
@@ -241,6 +241,27 @@ All ntfy fields (`priority`, `tags`, `basicAuth`) are fully optional. A minimal 
 
 `parseMode` is optional. When set, the title and message are automatically escaped for that mode. Telegram caps text at 4096 characters; longer messages are truncated with an ellipsis. Telegram has no numeric priority scale — setting an event override `priority: 0` maps to silent delivery (`disable_notification: true`). This differs from ntfy (1–5) and Gotify (0–10), where `0` is a valid priority value.
 
+### Interactive Permission Approvals
+
+When OpenCode requests tool or command permissions (`permission.ask`), the Telegram target renders structured permission details and interactive inline buttons:
+
+- **✅ Allow Once**: Approves the pending permission for this single invocation.
+- **🛡️ Allow Always**: Configures permanent allowance for matching patterns.
+- **❌ Reject**: Rejects the permission request.
+
+**Key features:**
+- **Zero-friction Remote Control**: Resolve permissions from your phone or Telegram client without switching back to the terminal.
+- **Real-time Status Updates**: Once a button is clicked, the inline keyboard is removed and the message updates to display the review decision (e.g. `👉 審核結果：✅ 已允許本次執行 (Allow Once)`).
+- **Security & Authorization**: The Telegram poller verifies incoming callback queries against the configured `chatId`. Actions from unauthorized chats are rejected.
+- **Stale & Duplicate Protection**: If a permission was already resolved in the terminal or timed out, the bot informs the user and cleanly cleans up the message buttons.
+
+### Rate Limiting & Resilience
+
+- **Sliding-Window Rate Limiting**: Built-in pacing strictly adheres to Telegram Bot API constraints (max 1 message/second per chat, 30 messages/second bot-wide).
+- **Dynamic 429 Backoff**: Parses `Retry-After` headers and Telegram error response `parameters.retry_after` to sleep for the exact duration before retrying.
+- **Markdown Entity Fallback**: If Telegram returns a 400 Bad Request ("can't parse entities"), the transport automatically falls back to plain-text delivery to ensure notifications are never lost.
+- **Multi-session Conflict Avoidance**: Automatically handles HTTP 409 Conflict during polling if multiple processes share the same bot token.
+
 ## Generic Webhook Setup
 
 For arbitrary HTTP endpoints (your own backend, Slack incoming webhooks, Pushover, etc.):
@@ -271,8 +292,9 @@ Inside `bodyTemplate`, `{{placeholders}}` are substituted in any string value (i
 
 Each webhook target gets:
 
-- **Retry with exponential backoff** — default 3 attempts (500 ms → 1 s → 2 s, with jitter, capped at 30 s).
+- **Retry with exponential backoff** — default 3 attempts (500 ms → 1 s → 2 s, with jitter, capped at 30 s). Supports dynamic delay from `Retry-After` headers and 429 response bodies.
 - **Circuit breaker** — after 5 consecutive failures, the target is skipped for 60 seconds, then probed once. A success closes the circuit; another failure re-opens it.
+- **Telegram rate limiting** — sliding-window rate limiter ensuring messages comply with Telegram limits (1 msg/s per chat, 30 msg/s bot-wide).
 - **Independent isolation** — one failing target does not delay or fail any other target.
 - **HTTP request timeout** — each `fetch()` call is capped by the `timeout` config field (default 5 seconds → 5000 ms). A hung endpoint aborts and retries rather than blocking forever.
 - **Session-scoped debounce** — rapid events of the same type within the same session are coalesced into one webhook (1000 ms window). Different sessions are never coalesced — each gets its own notification.

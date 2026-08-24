@@ -138,6 +138,147 @@ describe("Telegram transport", () => {
     const body = JSON.parse(fetchMock.mock.calls[0]![1].body as string);
     expect(body.disable_notification).toBe(true);
   });
+
+  it("retries with backoff on 429 with parameters.retry_after", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            ok: false,
+            error_code: 429,
+            description: "Too Many Requests: retry after 2",
+            parameters: { retry_after: 2 },
+          }),
+          { status: 429, statusText: "Too Many Requests", headers: { "Content-Type": "application/json" } },
+        ),
+      )
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true, result: {} }), { status: 200 }));
+    globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch;
+
+    sender.send([{ type: "telegram", botToken: "T", chatId: 1 }], "T", "M", "complete", {
+      context: baseContext,
+    });
+
+    await vi.advanceTimersByTimeAsync(FLUSH);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    // Advance 2 seconds for retry_after
+    await vi.advanceTimersByTimeAsync(2000);
+    await vi.runAllTimersAsync();
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("falls back to unformatted text when Telegram returns 400 with can't parse entities", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            ok: false,
+            error_code: 400,
+            description: "Bad Request: can't parse entities in message text: unexpected end tag",
+          }),
+          { status: 400, statusText: "Bad Request", headers: { "Content-Type": "application/json" } },
+        ),
+      )
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true, result: {} }), { status: 200 }));
+    globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch;
+
+    sender.send(
+      [{ type: "telegram", botToken: "T", chatId: 1, parseMode: "MarkdownV2" }],
+      "Unescaped",
+      "Bad * text",
+      "complete",
+      { context: baseContext },
+    );
+
+    await vi.advanceTimersByTimeAsync(FLUSH);
+    await vi.runAllTimersAsync();
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    // Second request should have stripped parse_mode
+    const secondCallBody = JSON.parse(fetchMock.mock.calls[1]![1].body as string);
+    expect(secondCallBody.parse_mode).toBeUndefined();
+  });
+
+  it("does not retry permanent 401 unauthorized error", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          ok: false,
+          error_code: 401,
+          description: "Unauthorized",
+        }),
+        { status: 401, statusText: "Unauthorized", headers: { "Content-Type": "application/json" } },
+      ),
+    );
+    globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch;
+
+    sender.send([{ type: "telegram", botToken: "T_INVALID", chatId: 1 }], "T", "M", "complete", {
+      context: baseContext,
+    });
+
+    await vi.advanceTimersByTimeAsync(FLUSH);
+    await vi.runAllTimersAsync();
+
+    // Should only attempt once, not retry 3 times
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("handles multiple concurrent telegram messages without dropping", async () => {
+    const fetchMock = mockFetchOk();
+    globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch;
+
+    const targets = [
+      { type: "telegram" as const, botToken: "BOT_MULTI", chatId: "chat_A" },
+      { type: "telegram" as const, botToken: "BOT_MULTI", chatId: "chat_B" },
+    ];
+
+    sender.send(targets, "Title", "Message", "complete", { context: baseContext });
+
+    await vi.advanceTimersByTimeAsync(FLUSH);
+    await vi.advanceTimersByTimeAsync(100);
+    await vi.runAllTimersAsync();
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("queues consecutive permission requests and delivers both with pacing", async () => {
+    const fetchMock = mockFetchOk();
+    globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch;
+
+    const target = { type: "telegram" as const, botToken: "BOT_QUEUE", chatId: "chat_1" };
+
+    // Permission 1: utils.js
+    sender.send([target], "OpenCode", "Permission 1", "permission", {
+      sessionID: "ses_1",
+      permission: { id: "p_1", permission: "bash", patterns: ["node utils.js"] },
+    });
+
+    // Permission 2: for loop (fired immediately after)
+    sender.send([target], "OpenCode", "Permission 2", "permission", {
+      sessionID: "ses_1",
+      permission: { id: "p_2", permission: "bash", patterns: ["for file in ..."] },
+    });
+
+    // Permission 1 is dispatched immediately
+    await vi.advanceTimersByTimeAsync(10);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const body1 = JSON.parse(fetchMock.mock.calls[0]![1].body as string);
+    expect(body1.text).toContain("node utils.js");
+
+    // Advance 500ms (still pacing before 1000ms)
+    await vi.advanceTimersByTimeAsync(500);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    // Advance remaining 500ms (1000ms total interval)
+    await vi.advanceTimersByTimeAsync(500);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const body2 = JSON.parse(fetchMock.mock.calls[1]![1].body as string);
+    expect(body2.text).toContain("for file in ...");
+  });
 });
 
 describe("Generic transport", () => {

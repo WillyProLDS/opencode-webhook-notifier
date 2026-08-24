@@ -1,5 +1,25 @@
 # Changelog
 
+## 2.1.0 — 2026-08
+
+### Added
+
+- **Interactive Telegram Permission Approval**: Permission notifications sent to Telegram now include interactive inline buttons (`Allow Once`, `Allow Always`, `Reject`), allowing remote approval or rejection directly from Telegram without switching back to the terminal.
+- **Telegram Long-Polling Receiver**: Added background long-polling (`getUpdates`) for Telegram bots to handle callback queries, enforce chat ID authorization, call the OpenCode client REST API to resolve permissions, and update message text with review status.
+- **Telegram Token-Bucket Rate Limiter**: Added sliding-window message pacing adhering to Telegram Bot API limits (1 msg/s per chat, 30 msg/s bot-wide) to avoid rate limit breaches.
+- **Dynamic Retry Delay & 429 Backoff**: Extended retry utility to support dynamic delays derived from HTTP `Retry-After` headers and Telegram error `parameters.retry_after` fields.
+- **Telegram Markdown Parsing Fallback**: Automatically falls back to plain-text delivery when Telegram returns 400 Bad Request due to entity parsing errors (`can't parse entities`).
+- **File Logging Support**: Added support for `OPENCODE_WEBHOOK_NOTIFIER_LOG_FILE` environment variable to write structured logs to a designated file.
+
+### Fixed
+
+- **Permission Queueing & Granular Deduplication**: Enhanced permission deduplication to track pending permissions by unique ID and tool execution hash, preventing race conditions and ensuring consecutive permissions are queued cleanly.
+- **Telegram 409 Conflict Backoff**: Poller gracefully handles HTTP 409 Conflict when multiple OpenCode processes poll the same bot token, backing off without spamming error logs.
+
+### Tests
+
+- Added comprehensive characterization and integration test suites covering Telegram interactive permissions, rate limiter pacing, dynamic retry predicates, and file logging (200 total passing tests).
+
 ## 2.0.1 — 2026-06
 
 ### Fixed

@@ -1,7 +1,7 @@
 import type { PluginInput } from "@opencode-ai/plugin";
 import { runCommand } from "../command/runner.js";
 import { getMessage, interpolateMessage, isEventCommandEnabled, isEventWebhookEnabled } from "../config/interpolate.js";
-import type { EventType, NotifierConfig } from "../config/schema.js";
+import type { EventType, NotifierConfig, PermissionDetails } from "../config/schema.js";
 import type { FocusDetector } from "../focus/index.js";
 import type { Logger } from "../log/logger.js";
 import type { WebhookSender } from "../transport/send.js";
@@ -14,6 +14,7 @@ export interface NotifyContext {
   sessionTitle?: string | null;
   agentName?: string | null;
   elapsedSeconds?: number | null;
+  permission?: PermissionDetails | null;
 }
 
 export interface Notifier {
@@ -80,6 +81,7 @@ export function createNotifier(deps: NotifierDeps): Notifier {
             projectName: ctx.projectName,
           },
           sessionID: ctx.sessionID ?? null,
+          permission: ctx.permission ?? null,
         });
       }
 

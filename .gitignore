@@ -77,3 +77,7 @@ package-lock.json.bak
 # Local config (never commit live credentials)
 opencode-webhook-notifier.json
 opencode-webhook-notifier-state.json
+
+graphify-out/
+.opencode
+.superpower

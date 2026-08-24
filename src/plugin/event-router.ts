@@ -1,6 +1,6 @@
 import type { PluginInput } from "@opencode-ai/plugin";
 import type { Event } from "@opencode-ai/sdk";
-import type { NotifierConfig } from "../config/schema.js";
+import type { NotifierConfig, PermissionDetails } from "../config/schema.js";
 import type { Logger } from "../log/logger.js";
 import type { Notifier } from "./notifier.js";
 import {
@@ -10,6 +10,7 @@ import {
   shouldResolveAgentNameForEvent,
 } from "./notifier.js";
 import type { PermissionDedupe } from "./permission-dedupe.js";
+import { extractPermissionDetails } from "./permission-helper.js";
 import type { SessionState } from "./session-state.js";
 
 export interface EventRouterDeps {
@@ -34,6 +35,7 @@ export function createEventRouter(deps: EventRouterDeps): EventRouter {
     sessionID: string | null,
     preloadedTitle?: string | null,
     elapsedSeconds?: number | null,
+    permission?: PermissionDetails | null,
   ): Promise<void> {
     const config = deps.config();
 
@@ -55,6 +57,7 @@ export function createEventRouter(deps: EventRouterDeps): EventRouter {
         sessionTitle,
         agentName: agentName.length > 0 ? agentName : null,
         elapsedSeconds: elapsedSeconds ?? null,
+        permission: permission ?? null,
       },
       config,
     );
@@ -66,10 +69,11 @@ export function createEventRouter(deps: EventRouterDeps): EventRouter {
       deps.logger.debug("event received", { type: observedType });
 
       if (PERMISSION_EVENT_TYPES.has(observedType)) {
-        const properties = event.properties as { sessionID?: unknown };
+        const properties = (event.properties ?? {}) as Record<string, unknown>;
         const sessionID = typeof properties?.sessionID === "string" ? properties.sessionID : null;
-        if (!deps.permissionDedupe.shouldSuppress(sessionID)) {
-          await dispatch("permission", sessionID);
+        const permission = extractPermissionDetails(properties);
+        if (!deps.permissionDedupe.shouldSuppress(sessionID, permission)) {
+          await dispatch("permission", sessionID, null, null, permission);
         }
         return;
       }

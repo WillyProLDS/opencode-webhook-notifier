@@ -75,6 +75,26 @@ describe("withRetry", () => {
     expect(fn).toHaveBeenCalledTimes(1);
   });
 
+  it("respects getRetryDelay for dynamic retry intervals", async () => {
+    const errorWithDelay = { name: "CustomRateLimit", retryAfterMs: 300 };
+    const fn = vi.fn().mockRejectedValueOnce(errorWithDelay).mockResolvedValue("success");
+
+    const promise = withRetry(fn, {
+      maxAttempts: 3,
+      initialDelayMs: 10,
+      getRetryDelay: (err) => (err as { retryAfterMs?: number }).retryAfterMs,
+    });
+
+    await vi.advanceTimersByTimeAsync(200);
+    expect(fn).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(100);
+    const result = await promise;
+
+    expect(result).toBe("success");
+    expect(fn).toHaveBeenCalledTimes(2);
+  });
+
   it("calls onAttempt with attempt number and error", async () => {
     const fn = vi.fn().mockRejectedValueOnce(new Error("e1")).mockResolvedValue("ok");
     const onAttempt = vi.fn();

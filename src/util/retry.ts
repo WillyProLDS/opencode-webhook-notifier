@@ -5,6 +5,7 @@ export interface RetryOptions {
   jitter?: boolean;
   random?: () => number;
   shouldRetry?: (error: unknown, attempt: number) => boolean;
+  getRetryDelay?: (error: unknown, attempt: number) => number | undefined;
   onAttempt?: (attempt: number, error: unknown) => void;
 }
 
@@ -28,6 +29,7 @@ export async function withRetry<T>(fn: () => Promise<T>, options: RetryOptions =
   const jitter = options.jitter ?? true;
   const random = options.random ?? Math.random;
   const shouldRetry = options.shouldRetry ?? (() => true);
+  const getRetryDelay = options.getRetryDelay;
 
   let lastError: unknown;
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
@@ -38,7 +40,11 @@ export async function withRetry<T>(fn: () => Promise<T>, options: RetryOptions =
       options.onAttempt?.(attempt, error);
       if (attempt >= maxAttempts) break;
       if (!shouldRetry(error, attempt)) break;
-      const delay = computeBackoff(attempt, initialDelayMs, maxDelayMs, jitter, random);
+      const customDelay = getRetryDelay?.(error, attempt);
+      const delay =
+        typeof customDelay === "number" && customDelay >= 0
+          ? Math.min(maxDelayMs, customDelay)
+          : computeBackoff(attempt, initialDelayMs, maxDelayMs, jitter, random);
       await new Promise<void>((resolve) => setTimeout(resolve, delay));
     }
   }

@@ -1,104 +1,93 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import type { PermissionDetails } from "../src/config/schema.js";
 import { createPermissionDedupe, type PermissionDedupe } from "../src/plugin/permission-dedupe.js";
 
 describe("createPermissionDedupe", () => {
   let dedupe: PermissionDedupe;
 
   beforeEach(() => {
-    dedupe = createPermissionDedupe();
+    dedupe = createPermissionDedupe({ windowMs: 1000 });
   });
 
   afterEach(() => {
     dedupe.reset();
   });
 
-  describe("shouldSuppress", () => {
-    it("returns false on first call (no prior state)", () => {
-      expect(dedupe.shouldSuppress("session-1", 1_000_000)).toBe(false);
+  describe("shouldSuppress with permission IDs and content", () => {
+    it("does NOT suppress different permissions in the same session in rapid succession", () => {
+      const perm1: PermissionDetails = {
+        id: "perm_1",
+        permission: "bash",
+        patterns: ["node scripts/utils.js"],
+      };
+      const perm2: PermissionDetails = {
+        id: "perm_2",
+        permission: "bash",
+        patterns: ["for file in ..."],
+      };
+
+      expect(dedupe.shouldSuppress("session-1", perm1, 1_000_000)).toBe(false);
+      // Fired only 50ms later (e.g. loop or subagent)
+      expect(dedupe.shouldSuppress("session-1", perm2, 1_000_050)).toBe(false);
     });
 
-    it("suppresses second call within 1000 ms (same session)", () => {
-      dedupe.shouldSuppress("session-1", 1_000_000);
-      expect(dedupe.shouldSuppress("session-1", 1_000_500)).toBe(true);
+    it("suppresses the SAME permission ID within the window", () => {
+      const perm1: PermissionDetails = {
+        id: "perm_1",
+        permission: "bash",
+        patterns: ["node scripts/utils.js"],
+      };
+
+      expect(dedupe.shouldSuppress("session-1", perm1, 1_000_000)).toBe(false);
+      // Duplicate event from hook + event stream
+      expect(dedupe.shouldSuppress("session-1", perm1, 1_000_100)).toBe(true);
     });
 
-    it("does NOT suppress at exactly 1000 ms", () => {
-      dedupe.shouldSuppress("session-1", 1_000_000);
-      expect(dedupe.shouldSuppress("session-1", 1_001_000)).toBe(false);
-    });
+    it("deduplicates by signature when permission has no id", () => {
+      const permA: PermissionDetails = {
+        permission: "bash",
+        patterns: ["node test.js"],
+      };
+      const permB: PermissionDetails = {
+        permission: "bash",
+        patterns: ["node other.js"],
+      };
 
-    it("does NOT suppress just after 1000 ms", () => {
-      dedupe.shouldSuppress("session-1", 1_000_000);
-      expect(dedupe.shouldSuppress("session-1", 1_001_001)).toBe(false);
+      expect(dedupe.shouldSuppress("session-1", permA, 1_000_000)).toBe(false);
+      // Different command -> not suppressed
+      expect(dedupe.shouldSuppress("session-1", permB, 1_000_100)).toBe(false);
+      // Same command -> suppressed
+      expect(dedupe.shouldSuppress("session-1", permA, 1_000_200)).toBe(true);
     });
+  });
 
-    it("global tracking suppresses across different sessions within window", () => {
-      dedupe.shouldSuppress("session-A", 1_000_000);
-      expect(dedupe.shouldSuppress("session-B", 1_000_500)).toBe(true);
-    });
-
-    it("global tracking releases after 1000 ms across sessions", () => {
-      dedupe.shouldSuppress("session-A", 1_000_000);
-      expect(dedupe.shouldSuppress("session-B", 1_001_001)).toBe(false);
-    });
-
-    it("treats null sessionID as global only", () => {
-      dedupe.shouldSuppress(null, 1_000_000);
-      expect(dedupe.shouldSuppress(null, 1_000_500)).toBe(true);
-      expect(dedupe.shouldSuppress(null, 1_001_001)).toBe(false);
-    });
-
-    it("non-suppressed call updates the timestamp baseline", () => {
-      dedupe.shouldSuppress("session-1", 1_000_000);
-      dedupe.shouldSuppress("session-1", 1_002_000);
-      expect(dedupe.shouldSuppress("session-1", 1_002_500)).toBe(true);
+  describe("fallback without permission object", () => {
+    it("returns false on first call and true on immediate second call", () => {
+      expect(dedupe.shouldSuppress("session-1", null, 1_000_000)).toBe(false);
+      expect(dedupe.shouldSuppress("session-1", null, 1_000_500)).toBe(true);
+      expect(dedupe.shouldSuppress("session-1", null, 1_001_500)).toBe(false);
     });
   });
 
   describe("prune", () => {
-    it("removes session entries with timestamp < cutoff", () => {
-      dedupe.shouldSuppress("session-old", 1_000_000);
+    it("removes entries with timestamp < cutoff", () => {
+      const perm1: PermissionDetails = { id: "perm_old" };
+      dedupe.shouldSuppress("session-1", perm1, 1_000_000);
 
       dedupe.prune(1_500_000);
 
-      expect(dedupe.shouldSuppress("session-old", 1_500_001)).toBe(false);
-    });
-
-    it("retains session entries with timestamp >= cutoff", () => {
-      dedupe.shouldSuppress("session-fresh", 2_000_000);
-
-      dedupe.prune(1_500_000);
-
-      expect(dedupe.shouldSuppress("session-fresh", 2_000_500)).toBe(true);
-    });
-
-    it("clears global timestamp if older than cutoff", () => {
-      dedupe.shouldSuppress(null, 1_000_000);
-
-      dedupe.prune(1_500_000);
-
-      expect(dedupe.shouldSuppress("session-X", 1_500_001)).toBe(false);
+      expect(dedupe.shouldSuppress("session-1", perm1, 1_500_001)).toBe(false);
     });
   });
 
   describe("reset", () => {
-    it("clears all session and global state", () => {
-      dedupe.shouldSuppress("session-1", 1_000_000);
-      dedupe.shouldSuppress(null, 1_000_000);
+    it("clears all state", () => {
+      const perm1: PermissionDetails = { id: "perm_1" };
+      dedupe.shouldSuppress("session-1", perm1, 1_000_000);
 
       dedupe.reset();
 
-      expect(dedupe.shouldSuppress("session-1", 1_000_500)).toBe(false);
-      expect(dedupe.shouldSuppress(null, 1_000_500)).toBe(true);
-    });
-  });
-
-  describe("custom window", () => {
-    it("respects custom windowMs option", () => {
-      const custom = createPermissionDedupe({ windowMs: 500 });
-      custom.shouldSuppress("s", 1_000_000);
-      expect(custom.shouldSuppress("s", 1_000_400)).toBe(true);
-      expect(custom.shouldSuppress("s", 1_000_600)).toBe(false);
+      expect(dedupe.shouldSuppress("session-1", perm1, 1_000_500)).toBe(false);
     });
   });
 });

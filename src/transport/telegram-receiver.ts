@@ -16,7 +16,6 @@ import { buildQuestionKeyboard } from "./telegram.js";
 
 export interface TelegramReceiverDeps {
   client: PluginInput["client"];
-  serverUrl: URL;
   config: () => NotifierConfig;
   logger: Logger;
 }
@@ -50,6 +49,23 @@ interface GetUpdatesResponse {
   ok: boolean;
   result?: TelegramUpdate[];
   description?: string;
+}
+
+interface OpenCodeRequestClient {
+  post(options: {
+    url: string;
+    path: { requestID: string };
+    body?: { answers: string[][] };
+    throwOnError: true;
+  }): Promise<unknown>;
+}
+
+function getOpenCodeRequestClient(client: PluginInput["client"]): OpenCodeRequestClient {
+  // The generated SDK client keeps its configured transport here. This preserves
+  // OpenCode's in-process fetch fallback when no HTTP server is listening.
+  const transport = (client as unknown as { _client?: OpenCodeRequestClient })._client;
+  if (!transport) throw new Error("OpenCode request transport is unavailable");
+  return transport;
 }
 
 async function answerCallbackQuery(
@@ -149,9 +165,12 @@ export function createTelegramReceiver(deps: TelegramReceiverDeps): TelegramRece
     if (answers.length !== pending.request.questions.length) return false;
 
     try {
-      const url = new URL(`/question/${encodeURIComponent(pending.request.id)}/reply`, deps.serverUrl);
-      const res = await postJson(url.toString(), { answers }, {}, undefined, "POST", deps.config().timeout * 1000);
-      if (!res.ok) throw new Error(`OpenCode question reply failed: ${res.status}`);
+      await getOpenCodeRequestClient(deps.client).post({
+        url: "/question/{requestID}/reply",
+        path: { requestID: pending.request.id },
+        body: { answers },
+        throwOnError: true,
+      });
 
       removePendingQuestionsByRequest(pending.request.id);
       if (pending.notificationMessageID) {
@@ -186,9 +205,11 @@ export function createTelegramReceiver(deps: TelegramReceiverDeps): TelegramRece
 
   async function rejectQuestion(pending: PendingQuestion): Promise<boolean> {
     try {
-      const url = new URL(`/question/${encodeURIComponent(pending.request.id)}/reject`, deps.serverUrl);
-      const res = await postJson(url.toString(), {}, {}, undefined, "POST", deps.config().timeout * 1000);
-      if (!res.ok) throw new Error(`OpenCode question reject failed: ${res.status}`);
+      await getOpenCodeRequestClient(deps.client).post({
+        url: "/question/{requestID}/reject",
+        path: { requestID: pending.request.id },
+        throwOnError: true,
+      });
 
       removePendingQuestionsByRequest(pending.request.id);
       if (pending.notificationMessageID) {

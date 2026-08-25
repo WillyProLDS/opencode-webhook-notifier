@@ -262,7 +262,6 @@ describe("Telegram Receiver (Long Polling & Callbacks)", () => {
 
     const receiver = createTelegramReceiver({
       client: clientMock as unknown as PluginInput["client"],
-      serverUrl: new URL("http://127.0.0.1:4096"),
       config: () => mockConfig,
       logger: loggerMock,
     });
@@ -349,7 +348,6 @@ describe("Telegram Receiver (Long Polling & Callbacks)", () => {
 
     const receiver = createTelegramReceiver({
       client: clientMock as unknown as PluginInput["client"],
-      serverUrl: new URL("http://127.0.0.1:4096"),
       config: () => mockConfig,
       logger: loggerMock,
     });
@@ -429,7 +427,6 @@ describe("Telegram Receiver (Long Polling & Callbacks)", () => {
 
     const receiver = createTelegramReceiver({
       client: clientMock as unknown as PluginInput["client"],
-      serverUrl: new URL("http://127.0.0.1:4096"),
       config: () => mockConfig,
       logger: loggerMock,
     });
@@ -472,7 +469,10 @@ describe("Telegram Receiver (Long Polling & Callbacks)", () => {
     );
 
     let polls = 0;
-    let replyAttempts = 0;
+    const postQuestion = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("OpenCode transport unavailable"))
+      .mockResolvedValueOnce({ data: true });
     const fetchMock = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
       if (url.includes("/getUpdates")) {
         polls++;
@@ -507,11 +507,8 @@ describe("Telegram Receiver (Long Polling & Callbacks)", () => {
           );
         });
       }
-      if (url.includes("/question/req_multi/reply")) {
-        replyAttempts++;
-        if (replyAttempts === 1) {
-          return Promise.resolve(new Response("failed", { status: 500, statusText: "Server Error" }));
-        }
+      if (url.startsWith("http://127.0.0.1:4096/question/")) {
+        throw new Error("Direct localhost request is not available");
       }
       return Promise.resolve(
         new Response(JSON.stringify({ ok: true, result: { message_id: 701 } }), {
@@ -523,8 +520,7 @@ describe("Telegram Receiver (Long Polling & Callbacks)", () => {
     globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch;
 
     const receiver = createTelegramReceiver({
-      client: {} as PluginInput["client"],
-      serverUrl: new URL("http://127.0.0.1:4096"),
+      client: { _client: { post: postQuestion } } as unknown as PluginInput["client"],
       config: () =>
         ({
           timeout: 5,
@@ -543,9 +539,14 @@ describe("Telegram Receiver (Long Polling & Callbacks)", () => {
     await new Promise((resolve) => setTimeout(resolve, 50));
     receiver.stop();
 
-    const replyCalls = fetchMock.mock.calls.filter(([url]) => String(url).includes("/question/req_multi/reply"));
-    expect(replyCalls).toHaveLength(2);
-    expect(JSON.parse(replyCalls[1]![1].body as string)).toEqual({ answers: [["Staging"], ["Web", "Worker"]] });
+    expect(postQuestion).toHaveBeenCalledTimes(2);
+    expect(postQuestion).toHaveBeenLastCalledWith({
+      url: "/question/{requestID}/reply",
+      path: { requestID: "req_multi" },
+      body: { answers: [["Staging"], ["Web", "Worker"]] },
+      throwOnError: true,
+    });
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/question/req_multi/reply"))).toBe(false);
   });
 
   it("accepts custom text only as a reply to the force-reply prompt", async () => {
@@ -566,6 +567,7 @@ describe("Telegram Receiver (Long Polling & Callbacks)", () => {
     );
 
     let polls = 0;
+    const postQuestion = vi.fn().mockResolvedValue({ data: true });
     const fetchMock = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
       if (url.includes("/getUpdates")) {
         polls++;
@@ -621,6 +623,9 @@ describe("Telegram Receiver (Long Polling & Callbacks)", () => {
           );
         });
       }
+      if (url.startsWith("http://127.0.0.1:4096/question/")) {
+        throw new Error("Direct localhost request is not available");
+      }
       const body = init?.body ? JSON.parse(init.body as string) : {};
       const messageID = body.reply_markup?.force_reply ? 700 : 701;
       return Promise.resolve(
@@ -633,8 +638,7 @@ describe("Telegram Receiver (Long Polling & Callbacks)", () => {
     globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch;
 
     const receiver = createTelegramReceiver({
-      client: {} as PluginInput["client"],
-      serverUrl: new URL("http://127.0.0.1:4096"),
+      client: { _client: { post: postQuestion } } as unknown as PluginInput["client"],
       config: () =>
         ({
           timeout: 5,
@@ -650,9 +654,13 @@ describe("Telegram Receiver (Long Polling & Callbacks)", () => {
     await new Promise((resolve) => setTimeout(resolve, 50));
     receiver.stop();
 
-    const replyCall = fetchMock.mock.calls.find(([url]) => String(url).includes("/question/req_custom/reply"));
-    expect(replyCall).toBeDefined();
-    expect(JSON.parse(replyCall![1].body as string)).toEqual({ answers: [["v2.2.0"]] });
+    expect(postQuestion).toHaveBeenCalledWith({
+      url: "/question/{requestID}/reply",
+      path: { requestID: "req_custom" },
+      body: { answers: [["v2.2.0"]] },
+      throwOnError: true,
+    });
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/question/req_custom/reply"))).toBe(false);
   });
 
   it("rejects a complete question request through OpenCode", async () => {
@@ -667,6 +675,7 @@ describe("Telegram Receiver (Long Polling & Callbacks)", () => {
     );
 
     let polls = 0;
+    const postQuestion = vi.fn().mockResolvedValue({ data: true });
     const fetchMock = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
       if (url.includes("/getUpdates")) {
         polls++;
@@ -696,6 +705,9 @@ describe("Telegram Receiver (Long Polling & Callbacks)", () => {
           );
         });
       }
+      if (url.startsWith("http://127.0.0.1:4096/question/")) {
+        throw new Error("Direct localhost request is not available");
+      }
       return Promise.resolve(
         new Response(JSON.stringify({ ok: true, result: {} }), {
           status: 200,
@@ -706,8 +718,7 @@ describe("Telegram Receiver (Long Polling & Callbacks)", () => {
     globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch;
 
     const receiver = createTelegramReceiver({
-      client: {} as PluginInput["client"],
-      serverUrl: new URL("http://127.0.0.1:4096"),
+      client: { _client: { post: postQuestion } } as unknown as PluginInput["client"],
       config: () =>
         ({
           timeout: 5,
@@ -723,7 +734,12 @@ describe("Telegram Receiver (Long Polling & Callbacks)", () => {
     await new Promise((resolve) => setTimeout(resolve, 50));
     receiver.stop();
 
-    expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/question/req_reject/reject"))).toBe(true);
+    expect(postQuestion).toHaveBeenCalledWith({
+      url: "/question/{requestID}/reject",
+      path: { requestID: "req_reject" },
+      throwOnError: true,
+    });
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/question/req_reject/reject"))).toBe(false);
     expect(getPendingQuestion(pending.key)).toBeUndefined();
   });
 });

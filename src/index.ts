@@ -17,7 +17,7 @@ import { createTelegramReceiver } from "./transport/telegram-receiver.js";
 
 const MEMORY_CLEANUP_INTERVAL_MS = 5 * 60 * 1000;
 
-export const WebhookNotifierPlugin: Plugin = async ({ client, directory, serverUrl }) => {
+export const WebhookNotifierPlugin: Plugin = async ({ client, directory }) => {
   const logger = createLogger();
   const lifecycle = createLifecycle();
   const configService = createConfigService({ logger });
@@ -37,7 +37,6 @@ export const WebhookNotifierPlugin: Plugin = async ({ client, directory, serverU
   const webhookSender = createWebhookSender({ logger, timeoutMs: initialConfig.timeout * 1000 });
   const telegramReceiver = createTelegramReceiver({
     client,
-    serverUrl,
     config: () => configService.get(),
     logger,
   });

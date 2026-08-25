@@ -8,7 +8,7 @@ import { createEventRouter } from "./plugin/event-router.js";
 import { createLifecycle } from "./plugin/lifecycle.js";
 import { createNotifier, extractAgentNameFromSessionTitle, getSessionInfo } from "./plugin/notifier.js";
 import { createPermissionDedupe } from "./plugin/permission-dedupe.js";
-import { extractPermissionDetails } from "./plugin/permission-helper.js";
+import { enrichPermissionDetails, extractPermissionDetails } from "./plugin/permission-helper.js";
 import { createSessionState } from "./plugin/session-state.js";
 import { createTurnCounter } from "./plugin/turn-counter.js";
 import { prunePendingQuestions } from "./transport/pending-questions.js";
@@ -90,7 +90,8 @@ export const WebhookNotifierPlugin: Plugin = async ({ client, directory }) => {
     },
     "permission.ask": async (input: Permission) => {
       const sessionID = input?.sessionID ?? null;
-      const permDetails = extractPermissionDetails(input as unknown as Record<string, unknown>);
+      const extractedPermission = extractPermissionDetails(input as unknown as Record<string, unknown>);
+      const permDetails = await enrichPermissionDetails(client, sessionID, extractedPermission);
       if (!permissionDedupe.shouldSuppress(sessionID, permDetails)) {
         let sessionTitle: string | null = null;
         const config = configService.get();

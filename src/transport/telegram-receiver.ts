@@ -2,7 +2,12 @@ import type { PluginInput } from "@opencode-ai/plugin";
 import type { NotifierConfig, TelegramTarget } from "../config/schema.js";
 import type { Logger } from "../log/logger.js";
 import { postJson } from "./http.js";
-import { getPendingPermission, removePendingPermission } from "./pending-permissions.js";
+import {
+  findPendingPermissionByPrompt,
+  getPendingPermission,
+  type PendingPermission,
+  removePendingPermission,
+} from "./pending-permissions.js";
 import {
   answerCurrentQuestion,
   findPendingQuestionByPrompt,
@@ -139,6 +144,31 @@ async function editQuestionKeyboard(botToken: string, pending: PendingQuestion, 
   }
 }
 
+async function editPermissionKeyboard(botToken: string, pending: PendingPermission, logger?: Logger): Promise<void> {
+  if (!pending.notificationMessageID || pending.chatID === undefined) return;
+  const inlineKeyboard = pending.rejected
+    ? [[{ text: "Finish without guidance", callback_data: `p:reject-now:${pending.key}` }]]
+    : [
+        [
+          { text: "Allow Once", callback_data: `p:once:${pending.key}` },
+          { text: "Allow Always", callback_data: `p:always:${pending.key}` },
+        ],
+        [{ text: "Reject without guidance", callback_data: `p:reject-now:${pending.key}` }],
+      ];
+  try {
+    const res = await postJson(`https://api.telegram.org/bot${botToken}/editMessageReplyMarkup`, {
+      chat_id: pending.chatID,
+      message_id: pending.notificationMessageID,
+      reply_markup: {
+        inline_keyboard: inlineKeyboard,
+      },
+    });
+    if (!res.ok) logger?.debug("Failed to update permission keyboard", { status: res.status });
+  } catch (error) {
+    logger?.debug("Error updating permission keyboard", { error: String(error) });
+  }
+}
+
 async function sendQuestionNotice(
   botToken: string,
   chatID: string | number,
@@ -201,6 +231,33 @@ export function createTelegramReceiver(deps: TelegramReceiverDeps): TelegramRece
 
   function botTokenFor(pending: PendingQuestion): string {
     return pending.botToken;
+  }
+
+  async function requestPermissionGuidance(
+    botToken: string,
+    targetChatId: string | number,
+    pending: PendingPermission,
+  ): Promise<boolean> {
+    try {
+      const res = await postJson(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+        chat_id: targetChatId,
+        text:
+          "Reply to this message with guidance for what OpenCode should do instead. " +
+          "To reject without guidance, use the button on the permission request.",
+        reply_markup: { force_reply: true, selective: true },
+      });
+      if (!res.ok) return false;
+      const payload = (await res.json()) as { result?: { message_id?: number } };
+      if (typeof payload.result?.message_id !== "number") return false;
+      pending.botToken = botToken;
+      pending.chatID = targetChatId;
+      pending.promptMessageID = payload.result.message_id;
+      await editPermissionKeyboard(botToken, pending, deps.logger);
+      return true;
+    } catch (error) {
+      deps.logger.debug("Failed to request permission rejection guidance", { error: String(error) });
+      return false;
+    }
   }
 
   async function rejectQuestion(pending: PendingQuestion): Promise<boolean> {
@@ -411,6 +468,78 @@ export function createTelegramReceiver(deps: TelegramReceiverDeps): TelegramRece
     await sendQuestionNotice(botToken, targetChatId, "Answer saved. Continue with the next question.", deps.logger);
   }
 
+  async function handlePermissionMessage(
+    botToken: string,
+    targetChatId: string | number,
+    message: TelegramMessage,
+  ): Promise<boolean> {
+    if (String(message.chat.id) !== String(targetChatId)) return false;
+    const replyMessageID = message.reply_to_message?.message_id;
+    const guidance = message.text?.trim();
+    if (!replyMessageID || !guidance) return false;
+    const pending = findPendingPermissionByPrompt(botToken, targetChatId, replyMessageID);
+    if (!pending) return false;
+    pending.guidance = guidance;
+
+    try {
+      if (!pending.rejected) {
+        await deps.client.postSessionIdPermissionsPermissionId({
+          path: { id: pending.sessionID, permissionID: pending.permissionID },
+          body: { response: "reject" },
+        });
+        pending.rejected = true;
+      }
+
+      await deps.client.session.promptAsync({
+        path: { id: pending.sessionID },
+        body: { parts: [{ type: "text", text: guidance }] },
+      });
+
+      removePendingPermission(pending.key);
+      if (pending.notificationMessageID && pending.chatID !== undefined) {
+        const status = "Permission rejected. Guidance sent to OpenCode.";
+        await removeMessageKeyboard(
+          botToken,
+          pending.chatID,
+          pending.notificationMessageID,
+          pending.notificationText ? `${pending.notificationText}\n\n${status}` : status,
+          deps.logger,
+        );
+      }
+      if (pending.promptMessageID) {
+        await removeMessageKeyboard(
+          botToken,
+          targetChatId,
+          pending.promptMessageID,
+          "Guidance submitted to OpenCode.",
+          deps.logger,
+        );
+      }
+      await sendQuestionNotice(botToken, targetChatId, "Permission rejected and guidance submitted.", deps.logger);
+      deps.logger.info("Permission rejected with guidance via Telegram", {
+        sessionID: pending.sessionID,
+        permissionID: pending.permissionID,
+      });
+    } catch (error) {
+      deps.logger.warn("Failed to reject permission or submit guidance", {
+        error: String(error),
+        rejected: pending.rejected === true,
+        sessionID: pending.sessionID,
+        permissionID: pending.permissionID,
+      });
+      await sendQuestionNotice(
+        botToken,
+        targetChatId,
+        pending.rejected
+          ? "Permission was rejected, but guidance delivery failed. Reply again to retry."
+          : "Permission rejection failed. Reply again to retry.",
+        deps.logger,
+      );
+      if (pending.rejected) await editPermissionKeyboard(botToken, pending, deps.logger);
+    }
+    return true;
+  }
+
   async function handleCallbackQuery(
     botToken: string,
     targetChatId: string | number,
@@ -431,10 +560,10 @@ export function createTelegramReceiver(deps: TelegramReceiverDeps): TelegramRece
 
     if (await handleQuestionCallback(botToken, targetChatId, query)) return;
 
-    const match = query.data.match(/^p:(once|always|reject):(.+)$/);
+    const match = query.data.match(/^p:(once|always|reject|reject-now):(.+)$/);
     if (!match?.[1] || !match[2]) return;
 
-    const action = match[1] as "once" | "always" | "reject";
+    const requestedAction = match[1] as "once" | "always" | "reject" | "reject-now";
     const key = match[2];
 
     const pending = getPendingPermission(key);
@@ -452,17 +581,72 @@ export function createTelegramReceiver(deps: TelegramReceiverDeps): TelegramRece
       return;
     }
 
+    if (
+      (pending.botToken !== undefined && pending.botToken !== botToken) ||
+      (pending.chatID !== undefined && String(pending.chatID) !== String(targetChatId))
+    ) {
+      deps.logger.warn("Received permission callback for a different Telegram target", {
+        permissionID: pending.permissionID,
+        targetChatId: String(targetChatId),
+      });
+      await answerCallbackQuery(botToken, query.id, "Unauthorized permission request.", deps.logger);
+      return;
+    }
+
+    if (query.message?.message_id) pending.notificationMessageID = query.message.message_id;
+    if (query.message?.text) pending.notificationText = query.message.text;
+    pending.botToken = botToken;
+    pending.chatID = targetChatId;
+
+    if (requestedAction === "reject") {
+      if (pending.rejected) {
+        await answerCallbackQuery(
+          botToken,
+          query.id,
+          "Permission is already rejected. Reply again to retry guidance.",
+          deps.logger,
+        );
+        return;
+      }
+      if (pending.promptMessageID) {
+        await answerCallbackQuery(
+          botToken,
+          query.id,
+          "A guidance prompt is already waiting for your reply.",
+          deps.logger,
+        );
+        return;
+      }
+      const prompted = await requestPermissionGuidance(botToken, targetChatId, pending);
+      await answerCallbackQuery(
+        botToken,
+        query.id,
+        prompted ? "Reply to the new prompt with guidance." : "Could not open guidance input.",
+        deps.logger,
+      );
+      return;
+    }
+
+    if (pending.rejected && requestedAction !== "reject-now") {
+      await answerCallbackQuery(botToken, query.id, "Permission is already rejected.", deps.logger);
+      return;
+    }
+
+    const action = requestedAction === "reject-now" ? "reject" : requestedAction;
+
     try {
       // Call OpenCode REST API to resolve permission
-      await deps.client.postSessionIdPermissionsPermissionId({
-        path: {
-          id: pending.sessionID,
-          permissionID: pending.permissionID,
-        },
-        body: {
-          response: action,
-        },
-      });
+      if (!pending.rejected) {
+        await deps.client.postSessionIdPermissionsPermissionId({
+          path: {
+            id: pending.sessionID,
+            permissionID: pending.permissionID,
+          },
+          body: {
+            response: action,
+          },
+        });
+      }
 
       removePendingPermission(key);
 
@@ -483,6 +667,15 @@ export function createTelegramReceiver(deps: TelegramReceiverDeps): TelegramRece
           query.message.chat.id,
           query.message.message_id,
           updatedText,
+          deps.logger,
+        );
+      }
+      if (pending.promptMessageID && pending.chatID !== undefined) {
+        await removeMessageKeyboard(
+          botToken,
+          pending.chatID,
+          pending.promptMessageID,
+          `Permission resolved: ${action}.`,
           deps.logger,
         );
       }
@@ -574,7 +767,9 @@ export function createTelegramReceiver(deps: TelegramReceiverDeps): TelegramRece
             }
             if (update.message) {
               const target = targets.find((candidate) => String(candidate.chatId) === String(update.message?.chat.id));
-              if (target) await handleQuestionMessage(botToken, target.chatId, update.message);
+              if (target && !(await handlePermissionMessage(botToken, target.chatId, update.message))) {
+                await handleQuestionMessage(botToken, target.chatId, update.message);
+              }
             }
           }
           if (data.result.length === 0) {

@@ -31,6 +31,8 @@ export function formatPermissionTelegramText(
   parseMode?: TelegramTarget["parseMode"],
 ): string {
   const summary = formatPermissionSummary(permission);
+  const step = permission.step ?? permission.title ?? `${summary.type}: ${summary.target}`;
+  const purpose = permission.purpose ?? baseMessage;
 
   if (parseMode === "MarkdownV2") {
     const escTitle = escapeMarkdownV2(title);
@@ -38,11 +40,15 @@ export function formatPermissionTelegramText(
     const escTarget = escapeInlineCode(summary.target);
     const escRule = escapeCodeBlock(summary.rule);
     const escMsg = escapeMarkdownV2(baseMessage);
+    const escStep = escapeMarkdownV2(step);
+    const escPurpose = escapeMarkdownV2(purpose);
 
     return (
       `*${escTitle}*\n` +
       `🔒 *權限需求通知 \\(Permission Required\\)*\n\n` +
       `📌 *任務*：${escMsg}\n` +
+      `*執行步驟 \\(Step\\)*：${escStep}\n` +
+      `*目的 \\(Purpose\\)*：${escPurpose}\n` +
       `🔧 *操作類型 \\(Tool\\)*：\`${escType}\`\n` +
       `🎯 *執行目標 \\(Target\\)*：\n\`${escTarget}\`\n\n` +
       `📋 *若要永久允許 \\(Allow Always Rule\\)*：\n\`\`\`json\n${escRule}\n\`\`\`\n\n` +
@@ -56,6 +62,8 @@ export function formatPermissionTelegramText(
       `<b>${esc(title)}</b>\n` +
       `🔒 <b>權限需求通知 (Permission Required)</b>\n\n` +
       `📌 <b>任務</b>：${esc(baseMessage)}\n` +
+      `<b>執行步驟 (Step)</b>：${esc(step)}\n` +
+      `<b>目的 (Purpose)</b>：${esc(purpose)}\n` +
       `🔧 <b>操作類型 (Tool)</b>：<code>${esc(summary.type)}</code>\n` +
       `🎯 <b>執行目標 (Target)</b>：\n<code>${esc(summary.target)}</code>\n\n` +
       `📋 <b>若要永久允許 (Allow Always Rule)</b>：\n<pre><code>${esc(summary.rule)}</code></pre>\n\n` +
@@ -67,6 +75,8 @@ export function formatPermissionTelegramText(
     `*${title}*\n` +
     `🔒 權限需求通知 (Permission Required)\n\n` +
     `📌 任務：${baseMessage}\n` +
+    `執行步驟 (Step)：${step}\n` +
+    `目的 (Purpose)：${purpose}\n` +
     `🔧 操作類型 (Tool)：\`${summary.type}\`\n` +
     `🎯 執行目標 (Target)：\n\`${summary.target}\`\n\n` +
     `📋 若要永久允許 (Allow Always Rule)：\n\`\`\`json\n${summary.rule}\n\`\`\`\n\n` +
@@ -263,7 +273,7 @@ export async function sendTelegram(
     }
 
     if (extra.permission.id && extra.sessionID) {
-      const key = registerPendingPermission(extra.sessionID, extra.permission.id);
+      const key = registerPendingPermission(extra.sessionID, extra.permission.id, target.botToken, target.chatId);
       replyMarkup = {
         inline_keyboard: [
           [

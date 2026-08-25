@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **Structured Question Notifications**: Question events now include every prompt, option description, multiple-selection mode, and custom-answer mode across webhook targets and custom commands. Generic JSON payloads include the original structured question request.
+- **Interactive Telegram Question Answers**: Telegram can answer single-choice, multiple-choice, and ForceReply custom-text questions, reject requests, and submit the ordered answers directly to OpenCode.
+- **Question Retry and Isolation**: Pending questions are scoped by bot and chat, remain available for one hour, bypass webhook debouncing, and preserve completed answers when an OpenCode submission needs to be retried.
+
+### Tests
+
+- Added focused coverage for structured question events, notification formatting, pending-state expiration, multiple Telegram chats, multi-question answers, ForceReply validation, API retry, and request rejection.
+
 ## 2.1.0 — 2026-08
 
 ### Added

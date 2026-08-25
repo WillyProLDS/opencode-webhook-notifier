@@ -1,6 +1,6 @@
 # opencode-webhook-notifier
 
-OpenCode plugin that sends webhook notifications (Discord, ntfy, Gotify, Telegram, generic JSON) on permission, completion, error, and other events. Supports interactive permission approval via Telegram inline buttons.
+OpenCode plugin that sends webhook notifications (Discord, ntfy, Gotify, Telegram, generic JSON) on permission, completion, error, and other events. Supports interactive permission approval and question answering via Telegram inline buttons.
 
 ## What it does
 
@@ -10,7 +10,7 @@ Sends webhook notifications when:
 - **Session completed** — session goes idle
 - **Subagent completed** — spawned agent finishes
 - **Error occurred** — session hit an error
-- **Question asked** — AI asks the user a question
+- **Question asked** — AI asks the user a question (including prompts, choices, and interactive Telegram answers)
 - **User cancelled** — session cancelled by user (ESC)
 - **Plan mode exited** — plan ready for review
 
@@ -255,6 +255,21 @@ When OpenCode requests tool or command permissions (`permission.ask`), the Teleg
 - **Security & Authorization**: The Telegram poller verifies incoming callback queries against the configured `chatId`. Actions from unauthorized chats are rejected.
 - **Stale & Duplicate Protection**: If a permission was already resolved in the terminal or timed out, the bot informs the user and cleanly cleans up the message buttons.
 
+### Interactive Question Answers
+
+Question notifications include every prompt, option description, multiple-selection mode, and custom-answer mode on all webhook targets and custom commands. Generic JSON payloads also include the original structured `question` request.
+
+Telegram question notifications provide an inline workflow:
+
+- Single-choice questions submit the selected option immediately and advance to the next question.
+- Multiple-choice questions let you toggle options before selecting `Submit this question`.
+- Questions with custom input enabled provide `Custom answer`; the bot sends a ForceReply prompt and only accepts text sent as a direct reply to that prompt.
+- `Reject request` rejects the complete question request.
+- All questions are listed in the notification, collected in order, and submitted to OpenCode together after the final answer.
+- Failed OpenCode submissions retain the pending answers and expose `Retry submit` instead of losing the request.
+
+Pending question requests are scoped to the configured bot and chat and expire after one hour. Question and permission notifications bypass webhook debouncing so concurrent interactive requests remain individually actionable.
+
 ### Rate Limiting & Resilience
 
 - **Sliding-Window Rate Limiting**: Built-in pacing strictly adheres to Telegram Bot API constraints (max 1 message/second per chat, 30 messages/second bot-wide).
@@ -284,7 +299,7 @@ For arbitrary HTTP endpoints (your own backend, Slack incoming webhooks, Pushove
 }
 ```
 
-Without `bodyTemplate`, the default body is a flat JSON object: `{title, message, event, timestamp, turn, sessionTitle, agentName, projectName}`.
+Without `bodyTemplate`, the default body is a flat JSON object: `{title, message, event, timestamp, turn, sessionTitle, agentName, projectName}`. Question events also include the structured `question` request.
 
 Inside `bodyTemplate`, `{{placeholders}}` are substituted in any string value (including nested objects and arrays). Available: `title`, `message`, `event`, `timestamp`, `turn`, `sessionTitle`, `agentName`, `projectName`.
 
@@ -297,7 +312,7 @@ Each webhook target gets:
 - **Telegram rate limiting** — sliding-window rate limiter ensuring messages comply with Telegram limits (1 msg/s per chat, 30 msg/s bot-wide).
 - **Independent isolation** — one failing target does not delay or fail any other target.
 - **HTTP request timeout** — each `fetch()` call is capped by the `timeout` config field (default 5 seconds → 5000 ms). A hung endpoint aborts and retries rather than blocking forever.
-- **Session-scoped debounce** — rapid events of the same type within the same session are coalesced into one webhook (1000 ms window). Different sessions are never coalesced — each gets its own notification.
+- **Session-scoped debounce** — rapid non-interactive events of the same type within the same session are coalesced into one webhook (1000 ms window). Permission and question requests bypass debouncing so each remains actionable.
 
 Override retry/breaker per target via `retry` and `circuitBreaker` fields. Override the global HTTP timeout via `timeout`. Defaults are tuned for transient failures; override if your endpoint has tighter SLOs.
 

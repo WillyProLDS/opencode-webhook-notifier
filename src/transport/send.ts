@@ -1,4 +1,10 @@
-import type { EventType, PermissionDetails, WebhookEventOverrides, WebhookTarget } from "../config/schema.js";
+import type {
+  EventType,
+  PermissionDetails,
+  QuestionDetails,
+  WebhookEventOverrides,
+  WebhookTarget,
+} from "../config/schema.js";
 import type { Logger } from "../log/logger.js";
 import { type CircuitBreaker, createCircuitBreaker } from "../util/circuit-breaker.js";
 import { createDebouncer, type KeyedDebouncer } from "../util/debounce.js";
@@ -15,6 +21,7 @@ export interface WebhookSendOptions {
   context?: GenericContext;
   sessionID?: string | null;
   permission?: PermissionDetails | null;
+  question?: QuestionDetails | null;
 }
 
 export interface WebhookSender {
@@ -83,12 +90,14 @@ async function dispatch(
           sendTelegram(target, title, message, options.overrides, timeoutMs, {
             sessionID: options.sessionID ?? null,
             permission: options.permission ?? null,
+            question: options.question ?? null,
           }),
         );
       } else {
         await sendTelegram(target, title, message, options.overrides, timeoutMs, {
           sessionID: options.sessionID ?? null,
           permission: options.permission ?? null,
+          question: options.question ?? null,
         });
       }
       break;
@@ -201,9 +210,9 @@ export function createWebhookSender(options: WebhookSenderOptions = {}): Webhook
     send(targets, title, message, eventType, sendOptions) {
       if (!targets || targets.length === 0) return;
 
-      // Permission requests require individual interactive approvals.
-      // Deliver them without debouncing so the rate limiter can queue and pace them safely in FIFO order.
-      if (eventType === "permission") {
+      // Interactive requests must remain individually actionable.
+      // Skip debouncing so the rate limiter can queue and pace them safely in FIFO order.
+      if (eventType === "permission" || eventType === "question") {
         void Promise.all(
           targets.map((target) => deliver(target, title, message, sendOptions ?? {}).catch(() => undefined)),
         );

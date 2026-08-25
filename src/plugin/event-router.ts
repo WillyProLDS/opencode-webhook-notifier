@@ -1,6 +1,6 @@
 import type { PluginInput } from "@opencode-ai/plugin";
 import type { Event } from "@opencode-ai/sdk";
-import type { NotifierConfig, PermissionDetails } from "../config/schema.js";
+import type { NotifierConfig, PermissionDetails, QuestionDetails } from "../config/schema.js";
 import type { Logger } from "../log/logger.js";
 import type { Notifier } from "./notifier.js";
 import {
@@ -11,6 +11,7 @@ import {
 } from "./notifier.js";
 import type { PermissionDedupe } from "./permission-dedupe.js";
 import { extractPermissionDetails } from "./permission-helper.js";
+import { extractQuestionDetails } from "./question-helper.js";
 import type { SessionState } from "./session-state.js";
 
 export interface EventRouterDeps {
@@ -36,6 +37,7 @@ export function createEventRouter(deps: EventRouterDeps): EventRouter {
     preloadedTitle?: string | null,
     elapsedSeconds?: number | null,
     permission?: PermissionDetails | null,
+    question?: QuestionDetails | null,
   ): Promise<void> {
     const config = deps.config();
 
@@ -58,6 +60,7 @@ export function createEventRouter(deps: EventRouterDeps): EventRouter {
         agentName: agentName.length > 0 ? agentName : null,
         elapsedSeconds: elapsedSeconds ?? null,
         permission: permission ?? null,
+        question: question ?? null,
       },
       config,
     );
@@ -67,6 +70,17 @@ export function createEventRouter(deps: EventRouterDeps): EventRouter {
     async handle(event) {
       const observedType: string = event.type;
       deps.logger.debug("event received", { type: observedType });
+
+      if (observedType === "question.asked") {
+        const properties = (event as unknown as { properties?: unknown }).properties;
+        const question = extractQuestionDetails(properties);
+        if (!question) {
+          deps.logger.warn("invalid question event ignored");
+          return;
+        }
+        await dispatch("question", question.sessionID, null, null, null, question);
+        return;
+      }
 
       if (PERMISSION_EVENT_TYPES.has(observedType)) {
         const properties = (event.properties ?? {}) as Record<string, unknown>;

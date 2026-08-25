@@ -1,7 +1,13 @@
-import type { PermissionDetails, TelegramTarget, WebhookEventOverrides } from "../config/schema.js";
+import type { PermissionDetails, QuestionDetails, TelegramTarget, WebhookEventOverrides } from "../config/schema.js";
 import { formatPermissionSummary } from "../plugin/permission-helper.js";
 import { postJson } from "./http.js";
 import { registerPendingPermission } from "./pending-permissions.js";
+import {
+  getCurrentQuestionIndex,
+  type PendingQuestion,
+  registerPendingQuestion,
+  removePendingQuestion,
+} from "./pending-questions.js";
 
 const TELEGRAM_MAX_TEXT = 4096;
 const MARKDOWN_V2_ESCAPE = /([_*[\]()~`>#+\-=|{}.!\\])/g;
@@ -100,16 +106,50 @@ function buildText(title: string, message: string, parseMode?: TelegramTarget["p
 export interface TelegramExtra {
   sessionID?: string | null;
   permission?: PermissionDetails | null;
+  question?: QuestionDetails | null;
 }
 
-interface InlineKeyboardButton {
+export interface InlineKeyboardButton {
   text: string;
   callback_data?: string;
   url?: string;
 }
 
-interface InlineKeyboardMarkup {
+export interface InlineKeyboardMarkup {
   inline_keyboard: InlineKeyboardButton[][];
+}
+
+export function buildQuestionKeyboard(pending: PendingQuestion): InlineKeyboardMarkup {
+  const questionIndex = getCurrentQuestionIndex(pending);
+  if (questionIndex < 0) {
+    return {
+      inline_keyboard: [
+        [{ text: "Retry submit", callback_data: `q:t:${pending.key}` }],
+        [{ text: "Reject request", callback_data: `q:r:${pending.key}` }],
+      ],
+    };
+  }
+
+  const question = pending.request.questions[questionIndex];
+  if (!question) return { inline_keyboard: [] };
+  const rows = question.options.map((option, optionIndex) => {
+    const selected = pending.selected.includes(option.label);
+    return [
+      {
+        text: question.multiple && selected ? `[x] ${option.label}` : option.label,
+        callback_data: `q:o:${pending.key}:${questionIndex}:${optionIndex}`,
+      },
+    ];
+  });
+
+  if (question.multiple) {
+    rows.push([{ text: "Submit this question", callback_data: `q:s:${pending.key}:${questionIndex}` }]);
+  }
+  if (question.custom !== false) {
+    rows.push([{ text: "Custom answer", callback_data: `q:c:${pending.key}:${questionIndex}` }]);
+  }
+  rows.push([{ text: "Reject request", callback_data: `q:r:${pending.key}` }]);
+  return { inline_keyboard: rows };
 }
 
 interface TelegramPayload {
@@ -214,6 +254,7 @@ export async function sendTelegram(
 
   let text: string;
   let replyMarkup: InlineKeyboardMarkup | undefined;
+  let pendingQuestion: PendingQuestion | undefined;
 
   if (extra?.permission) {
     text = formatPermissionTelegramText(title, message, extra.permission, target.parseMode);
@@ -233,6 +274,10 @@ export async function sendTelegram(
         ],
       };
     }
+  } else if (extra?.question) {
+    text = buildText(title, message, target.parseMode);
+    pendingQuestion = registerPendingQuestion(extra.question, target.botToken, target.chatId);
+    replyMarkup = buildQuestionKeyboard(pendingQuestion);
   } else {
     text = buildText(title, message, target.parseMode);
   }
@@ -278,9 +323,11 @@ export async function sendTelegram(
       if (retryRes.ok) {
         return;
       }
+      if (pendingQuestion) removePendingQuestion(pendingQuestion.key);
       throw await parseTelegramError(retryRes);
     }
 
+    if (pendingQuestion) removePendingQuestion(pendingQuestion.key);
     throw error;
   }
 }

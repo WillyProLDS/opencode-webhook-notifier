@@ -130,4 +130,31 @@ describe("notifier webhook send passes sessionID", () => {
     const options = call?.[4];
     expect(options?.sessionID).toBe("session-42");
   });
+
+  it("appends structured question details to the message", async () => {
+    const { sender, notifier } = makeDeps();
+    const question = {
+      id: "req_1",
+      sessionID: "session-42",
+      questions: [
+        {
+          header: "Target",
+          question: "Where should this deploy?",
+          options: [{ label: "Staging", description: "Use staging" }],
+        },
+      ],
+    };
+
+    await notifier.notify({
+      eventType: "question",
+      projectName: "demo",
+      sessionID: "session-42",
+      question,
+    });
+
+    const call = (sender.send as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(call?.[2]).toContain("1. Target: Where should this deploy?");
+    expect(call?.[2]).toContain("- Staging: Use staging");
+    expect(call?.[4]?.question).toEqual(question);
+  });
 });

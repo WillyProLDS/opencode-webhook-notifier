@@ -1,10 +1,11 @@
 import type { PluginInput } from "@opencode-ai/plugin";
 import { runCommand } from "../command/runner.js";
 import { getMessage, interpolateMessage, isEventCommandEnabled, isEventWebhookEnabled } from "../config/interpolate.js";
-import type { EventType, NotifierConfig, PermissionDetails } from "../config/schema.js";
+import type { EventType, NotifierConfig, PermissionDetails, QuestionDetails } from "../config/schema.js";
 import type { FocusDetector } from "../focus/index.js";
 import type { Logger } from "../log/logger.js";
 import type { WebhookSender } from "../transport/send.js";
+import { appendQuestionDetails } from "./question-helper.js";
 import type { TurnCounter } from "./turn-counter.js";
 
 export interface NotifyContext {
@@ -15,6 +16,7 @@ export interface NotifyContext {
   agentName?: string | null;
   elapsedSeconds?: number | null;
   permission?: PermissionDetails | null;
+  question?: QuestionDetails | null;
 }
 
 export interface Notifier {
@@ -61,13 +63,13 @@ export function createNotifier(deps: NotifierDeps): Notifier {
         timestamp,
         turn,
       };
-      const message = interpolateMessage(rawMessage, messageContext);
+      const message = appendQuestionDetails(interpolateMessage(rawMessage, messageContext), ctx.question);
 
       if (config.webhook.enabled && config.webhook.targets.length > 0 && isEventWebhookEnabled(config, ctx.eventType)) {
         const title = getNotificationTitle(config, ctx.projectName);
         const eventOverrides = config.webhook.events?.[ctx.eventType];
         const finalMessage = eventOverrides?.message
-          ? interpolateMessage(eventOverrides.message, messageContext)
+          ? appendQuestionDetails(interpolateMessage(eventOverrides.message, messageContext), ctx.question)
           : message;
 
         deps.webhookSender.send(config.webhook.targets, title, finalMessage, ctx.eventType, {
@@ -79,9 +81,11 @@ export function createNotifier(deps: NotifierDeps): Notifier {
             sessionTitle: ctx.sessionTitle ?? null,
             agentName: ctx.agentName ?? null,
             projectName: ctx.projectName,
+            question: ctx.question ?? null,
           },
           sessionID: ctx.sessionID ?? null,
           permission: ctx.permission ?? null,
+          question: ctx.question ?? null,
         });
       }
 

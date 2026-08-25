@@ -11,6 +11,7 @@ import { createPermissionDedupe } from "./plugin/permission-dedupe.js";
 import { extractPermissionDetails } from "./plugin/permission-helper.js";
 import { createSessionState } from "./plugin/session-state.js";
 import { createTurnCounter } from "./plugin/turn-counter.js";
+import { prunePendingQuestions } from "./transport/pending-questions.js";
 import { createWebhookSender } from "./transport/send.js";
 import { createTelegramReceiver } from "./transport/telegram-receiver.js";
 
@@ -74,6 +75,7 @@ export const WebhookNotifierPlugin: Plugin = async ({ client, directory }) => {
     const cutoff = Date.now() - MEMORY_CLEANUP_INTERVAL_MS;
     sessionState.pruneOlderThan(cutoff);
     permissionDedupe.prune(cutoff);
+    prunePendingQuestions();
   }, MEMORY_CLEANUP_INTERVAL_MS);
   cleanupInterval.unref?.();
   lifecycle.register(() => clearInterval(cleanupInterval));
@@ -108,13 +110,6 @@ export const WebhookNotifierPlugin: Plugin = async ({ client, directory }) => {
       }
     },
     "tool.execute.before": async (input) => {
-      if (input.tool === "question") {
-        await notifier.notify({
-          eventType: "question",
-          projectName,
-          sessionID: input.sessionID ?? null,
-        });
-      }
       if (input.tool === "plan_exit") {
         await notifier.notify({
           eventType: "plan_exit",

@@ -1,4 +1,4 @@
-import type { EventType, GenericTarget, WebhookEventOverrides } from "../config/schema.js";
+import type { EventType, GenericTarget, QuestionDetails, WebhookEventOverrides } from "../config/schema.js";
 
 export interface GenericContext {
   event: EventType;
@@ -7,6 +7,7 @@ export interface GenericContext {
   sessionTitle?: string | null;
   agentName?: string | null;
   projectName?: string | null;
+  question?: QuestionDetails | null;
 }
 
 const PLACEHOLDER_PATTERN = /\{\{\s*([a-zA-Z]+)\s*\}\}/g;
@@ -60,6 +61,7 @@ function defaultBody(title: string, message: string, ctx: GenericContext): Recor
   if (ctx.sessionTitle != null) body.sessionTitle = ctx.sessionTitle;
   if (ctx.agentName != null) body.agentName = ctx.agentName;
   if (ctx.projectName != null) body.projectName = ctx.projectName;
+  if (ctx.question != null) body.question = ctx.question;
   return body;
 }
 

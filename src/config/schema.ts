@@ -108,6 +108,25 @@ export interface PermissionDetails {
   title?: string | null;
 }
 
+export interface QuestionOption {
+  label: string;
+  description: string;
+}
+
+export interface QuestionInfo {
+  question: string;
+  header: string;
+  options: QuestionOption[];
+  multiple?: boolean;
+  custom?: boolean;
+}
+
+export interface QuestionDetails {
+  id: string;
+  sessionID: string;
+  questions: QuestionInfo[];
+}
+
 export interface MessageContext {
   sessionTitle?: string | null;
   agentName?: string | null;

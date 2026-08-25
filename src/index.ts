@@ -108,13 +108,6 @@ export const WebhookNotifierPlugin: Plugin = async ({ client, directory }) => {
       }
     },
     "tool.execute.before": async (input) => {
-      if (input.tool === "question") {
-        await notifier.notify({
-          eventType: "question",
-          projectName,
-          sessionID: input.sessionID ?? null,
-        });
-      }
       if (input.tool === "plan_exit") {
         await notifier.notify({
           eventType: "plan_exit",

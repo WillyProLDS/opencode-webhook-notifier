@@ -1,4 +1,4 @@
-import type { PermissionDetails, TelegramTarget, WebhookEventOverrides } from "../config/schema.js";
+import type { PermissionDetails, QuestionDetails, TelegramTarget, WebhookEventOverrides } from "../config/schema.js";
 import { formatPermissionSummary } from "../plugin/permission-helper.js";
 import { postJson } from "./http.js";
 import { registerPendingPermission } from "./pending-permissions.js";
@@ -100,6 +100,7 @@ function buildText(title: string, message: string, parseMode?: TelegramTarget["p
 export interface TelegramExtra {
   sessionID?: string | null;
   permission?: PermissionDetails | null;
+  question?: QuestionDetails | null;
 }
 
 interface InlineKeyboardButton {

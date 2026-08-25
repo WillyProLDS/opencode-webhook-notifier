@@ -1,7 +1,11 @@
 import type { PluginInput } from "@opencode-ai/plugin";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { NotifierConfig, PermissionDetails, TelegramTarget } from "../src/config/schema.js";
-import { formatPermissionSummary } from "../src/plugin/permission-helper.js";
+import {
+  enrichPermissionDetails,
+  extractPermissionDetails,
+  formatPermissionSummary,
+} from "../src/plugin/permission-helper.js";
 import { clearPendingPermissions, registerPendingPermission } from "../src/transport/pending-permissions.js";
 import {
   clearPendingQuestions,
@@ -22,6 +26,52 @@ function mockFetchOk(data: unknown = { ok: true, result: [] }) {
 }
 
 describe("Permission Helper", () => {
+  it("extracts legacy and v2 permission message references", () => {
+    expect(
+      extractPermissionDetails({
+        id: "p_1",
+        permission: "bash",
+        message: "Run verification",
+        tool: { messageID: "msg_1", callID: "call_1" },
+      }),
+    ).toEqual(
+      expect.objectContaining({
+        title: "Run verification",
+        messageID: "msg_1",
+        callID: "call_1",
+      }),
+    );
+  });
+
+  it("enriches permission details from the originating tool context", async () => {
+    const message = vi.fn().mockResolvedValue({
+      data: {
+        parts: [
+          { type: "text", text: "Verify the change before reporting completion." },
+          {
+            id: "part_1",
+            type: "tool",
+            callID: "call_1",
+            state: { status: "running", input: { description: "Runs the focused verification tests" } },
+          },
+        ],
+      },
+    });
+    const details = await enrichPermissionDetails(
+      { session: { message } } as unknown as PluginInput["client"],
+      "ses_1",
+      { id: "p_1", permission: "bash", messageID: "msg_1", callID: "call_1" },
+    );
+
+    expect(message).toHaveBeenCalledWith({ path: { id: "ses_1", messageID: "msg_1" } });
+    expect(details).toEqual(
+      expect.objectContaining({
+        step: "Runs the focused verification tests",
+        purpose: "Verify the change before reporting completion.",
+      }),
+    );
+  });
+
   it("formats permission summary and rule for bash command", () => {
     const perm: PermissionDetails = {
       id: "p_1",
@@ -72,12 +122,16 @@ describe("Telegram Permission Formatting & Inline Buttons", () => {
       permission: "bash",
       patterns: ["rtk git status"],
       always: ["rtk git status*"],
+      step: "Checks the repository status",
+      purpose: "Confirm only intended files changed",
     };
 
     const text = formatPermissionTelegramText("OpenCode (ist-n8n)", "Session needs permission", perm, "MarkdownV2");
     expect(text).toContain("權限需求通知");
     expect(text).toContain("rtk git status");
     expect(text).toContain("Allow Always Rule");
+    expect(text).toContain("Checks the repository status");
+    expect(text).toContain("Confirm only intended files changed");
   });
 
   it("sends inline keyboard buttons when permission has id and sessionID", async () => {
@@ -281,6 +335,234 @@ describe("Telegram Receiver (Long Polling & Callbacks)", () => {
         response: "once",
       },
     });
+  });
+
+  it("collects rejection guidance before rejecting and prompting the session", async () => {
+    const key = registerPendingPermission("ses_123", "perm_456", "TEST_BOT_TOKEN", 12345);
+    const rejectPermission = vi.fn().mockResolvedValue({ data: true });
+    const promptAsync = vi.fn().mockResolvedValue({ data: undefined });
+    let polls = 0;
+    const fetchMock = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      if (url.includes("/getUpdates")) {
+        polls++;
+        if (polls === 1) {
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                ok: true,
+                result: [
+                  {
+                    update_id: 1,
+                    callback_query: {
+                      id: "cb_reject",
+                      data: `p:reject:${key}`,
+                      message: { message_id: 500, chat: { id: 12345 }, text: "Permission details" },
+                    },
+                  },
+                  {
+                    update_id: 2,
+                    message: {
+                      message_id: 701,
+                      chat: { id: 12345 },
+                      text: "Use a read-only command instead.",
+                      reply_to_message: { message_id: 700 },
+                    },
+                  },
+                ],
+              }),
+              { status: 200, headers: { "Content-Type": "application/json" } },
+            ),
+          );
+        }
+        return new Promise((_, reject) => {
+          init?.signal?.addEventListener("abort", () =>
+            reject(Object.assign(new Error("AbortError"), { name: "AbortError" })),
+          );
+        });
+      }
+
+      const body = init?.body ? JSON.parse(init.body as string) : {};
+      const messageID = body.reply_markup?.force_reply ? 700 : 702;
+      return Promise.resolve(
+        new Response(JSON.stringify({ ok: true, result: { message_id: messageID } }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+    });
+    globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch;
+
+    const receiver = createTelegramReceiver({
+      client: {
+        postSessionIdPermissionsPermissionId: rejectPermission,
+        session: { promptAsync },
+      } as unknown as PluginInput["client"],
+      config: () =>
+        ({
+          webhook: {
+            enabled: true,
+            targets: [{ type: "telegram", botToken: "TEST_BOT_TOKEN", chatId: 12345 }],
+          },
+        }) as NotifierConfig,
+      logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+    });
+
+    receiver.start();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    receiver.stop();
+
+    expect(rejectPermission).toHaveBeenCalledWith({
+      path: { id: "ses_123", permissionID: "perm_456" },
+      body: { response: "reject" },
+    });
+    expect(promptAsync).toHaveBeenCalledWith({
+      path: { id: "ses_123" },
+      body: { parts: [{ type: "text", text: "Use a read-only command instead." }] },
+    });
+    expect(rejectPermission.mock.invocationCallOrder[0]).toBeLessThan(promptAsync.mock.invocationCallOrder[0]!);
+
+    const telegramBodies = fetchMock.mock.calls
+      .filter(([url]) => !String(url).includes("/getUpdates"))
+      .map(([, init]) => JSON.parse((init?.body as string) || "{}"));
+    expect(telegramBodies.some((body) => body.reply_markup?.force_reply === true)).toBe(true);
+    expect(
+      telegramBodies.some((body) =>
+        body.reply_markup?.inline_keyboard
+          ?.flat()
+          .some((button: { text: string }) => button.text.includes("Reject without guidance")),
+      ),
+    ).toBe(true);
+  });
+
+  it("does not reject when opening the guidance prompt", async () => {
+    const key = registerPendingPermission("ses_123", "perm_456", "TEST_BOT_TOKEN", 12345);
+    const rejectPermission = vi.fn();
+    let polls = 0;
+    const fetchMock = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      if (url.includes("/getUpdates")) {
+        polls++;
+        if (polls === 1) {
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                ok: true,
+                result: [
+                  {
+                    update_id: 1,
+                    callback_query: {
+                      id: "cb_reject",
+                      data: `p:reject:${key}`,
+                      message: { message_id: 500, chat: { id: 12345 }, text: "Permission details" },
+                    },
+                  },
+                ],
+              }),
+              { status: 200, headers: { "Content-Type": "application/json" } },
+            ),
+          );
+        }
+        return new Promise((_, reject) => {
+          init?.signal?.addEventListener("abort", () =>
+            reject(Object.assign(new Error("AbortError"), { name: "AbortError" })),
+          );
+        });
+      }
+      return Promise.resolve(
+        new Response(JSON.stringify({ ok: true, result: { message_id: 700 } }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+    });
+    globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch;
+
+    const receiver = createTelegramReceiver({
+      client: { postSessionIdPermissionsPermissionId: rejectPermission } as unknown as PluginInput["client"],
+      config: () =>
+        ({
+          webhook: {
+            enabled: true,
+            targets: [{ type: "telegram", botToken: "TEST_BOT_TOKEN", chatId: 12345 }],
+          },
+        }) as NotifierConfig,
+      logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+    });
+
+    receiver.start();
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    receiver.stop();
+
+    expect(rejectPermission).not.toHaveBeenCalled();
+    const forceReplyRequest = fetchMock.mock.calls.find(([, init]) => {
+      const body = init?.body ? JSON.parse(init.body as string) : {};
+      return body.reply_markup?.force_reply === true;
+    });
+    expect(forceReplyRequest).toBeDefined();
+  });
+
+  it("rejects permission callbacks from a different configured chat", async () => {
+    const key = registerPendingPermission("ses_123", "perm_456", "TEST_BOT_TOKEN", 12345);
+    const resolvePermission = vi.fn();
+    let polls = 0;
+    const fetchMock = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      if (url.includes("/getUpdates")) {
+        polls++;
+        if (polls === 1) {
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                ok: true,
+                result: [
+                  {
+                    update_id: 1,
+                    callback_query: {
+                      id: "cb_wrong_chat",
+                      data: `p:once:${key}`,
+                      message: { message_id: 500, chat: { id: 67890 }, text: "Permission details" },
+                    },
+                  },
+                ],
+              }),
+              { status: 200, headers: { "Content-Type": "application/json" } },
+            ),
+          );
+        }
+        return new Promise((_, reject) => {
+          init?.signal?.addEventListener("abort", () =>
+            reject(Object.assign(new Error("AbortError"), { name: "AbortError" })),
+          );
+        });
+      }
+      return Promise.resolve(new Response(JSON.stringify({ ok: true, result: {} }), { status: 200 }));
+    });
+    globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch;
+
+    const receiver = createTelegramReceiver({
+      client: { postSessionIdPermissionsPermissionId: resolvePermission } as unknown as PluginInput["client"],
+      config: () =>
+        ({
+          webhook: {
+            enabled: true,
+            targets: [
+              { type: "telegram", botToken: "TEST_BOT_TOKEN", chatId: 12345 },
+              { type: "telegram", botToken: "TEST_BOT_TOKEN", chatId: 67890 },
+            ],
+          },
+        }) as NotifierConfig,
+      logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+    });
+
+    receiver.start();
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    receiver.stop();
+
+    expect(resolvePermission).not.toHaveBeenCalled();
+    const callbackAnswers = fetchMock.mock.calls
+      .filter(([url]) => String(url).includes("/answerCallbackQuery"))
+      .map(([, init]) => JSON.parse((init?.body as string) || "{}"));
+    expect(callbackAnswers).toContainEqual(
+      expect.objectContaining({ callback_query_id: "cb_wrong_chat", text: "Unauthorized permission request." }),
+    );
   });
 
   it("handles 429 in getUpdates and logs warning with retry info", async () => {

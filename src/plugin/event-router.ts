@@ -10,7 +10,7 @@ import {
   shouldResolveAgentNameForEvent,
 } from "./notifier.js";
 import type { PermissionDedupe } from "./permission-dedupe.js";
-import { extractPermissionDetails } from "./permission-helper.js";
+import { enrichPermissionDetails, extractPermissionDetails } from "./permission-helper.js";
 import { extractQuestionDetails } from "./question-helper.js";
 import type { SessionState } from "./session-state.js";
 
@@ -85,7 +85,7 @@ export function createEventRouter(deps: EventRouterDeps): EventRouter {
       if (PERMISSION_EVENT_TYPES.has(observedType)) {
         const properties = (event.properties ?? {}) as Record<string, unknown>;
         const sessionID = typeof properties?.sessionID === "string" ? properties.sessionID : null;
-        const permission = extractPermissionDetails(properties);
+        const permission = await enrichPermissionDetails(deps.client, sessionID, extractPermissionDetails(properties));
         if (!deps.permissionDedupe.shouldSuppress(sessionID, permission)) {
           await dispatch("permission", sessionID, null, null, permission);
         }

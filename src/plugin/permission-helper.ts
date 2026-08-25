@@ -1,3 +1,4 @@
+import type { PluginInput } from "@opencode-ai/plugin";
 import type { PermissionDetails } from "../config/schema.js";
 
 export function extractPermissionDetails(raw: Record<string, unknown> | null | undefined): PermissionDetails | null {
@@ -38,7 +39,12 @@ export function extractPermissionDetails(raw: Record<string, unknown> | null | u
       ? (raw.metadata as Record<string, unknown>)
       : null;
 
-  const title = typeof raw.title === "string" ? raw.title : null;
+  const title = typeof raw.title === "string" ? raw.title : typeof raw.message === "string" ? raw.message : null;
+  const tool =
+    raw.tool && typeof raw.tool === "object" && !Array.isArray(raw.tool) ? (raw.tool as Record<string, unknown>) : null;
+  const messageID =
+    typeof raw.messageID === "string" ? raw.messageID : typeof tool?.messageID === "string" ? tool.messageID : null;
+  const callID = typeof raw.callID === "string" ? raw.callID : typeof tool?.callID === "string" ? tool.callID : null;
 
   return {
     id,
@@ -47,7 +53,48 @@ export function extractPermissionDetails(raw: Record<string, unknown> | null | u
     always: always.length > 0 ? always : null,
     metadata,
     title,
+    messageID,
+    callID,
   };
+}
+
+export async function enrichPermissionDetails(
+  client: PluginInput["client"],
+  sessionID: string | null,
+  permission: PermissionDetails | null,
+): Promise<PermissionDetails | null> {
+  if (!permission || !sessionID || !permission.messageID) return permission;
+
+  try {
+    const response = await client.session.message({
+      path: { id: sessionID, messageID: permission.messageID },
+    });
+    const parts = response.data?.parts;
+    if (!Array.isArray(parts)) return permission;
+
+    const toolIndex = parts.findIndex(
+      (part) =>
+        part.type === "tool" &&
+        (!permission.callID || part.callID === permission.callID || part.id === permission.callID),
+    );
+    const toolPart = toolIndex >= 0 ? parts[toolIndex] : undefined;
+    const input =
+      toolPart?.type === "tool" && toolPart.state && "input" in toolPart.state ? toolPart.state.input : undefined;
+    const step =
+      input && typeof input === "object" && typeof input.description === "string" && input.description.trim().length > 0
+        ? input.description.trim()
+        : permission.title;
+
+    const purposeParts = (toolIndex >= 0 ? parts.slice(0, toolIndex) : parts).filter(
+      (part) => part.type === "text" && !part.synthetic && part.text.trim().length > 0,
+    );
+    const purposePart = purposeParts.at(-1);
+    const purpose = purposePart?.type === "text" ? purposePart.text.trim() : null;
+
+    return { ...permission, step: step ?? null, purpose };
+  } catch {
+    return permission;
+  }
 }
 
 export function formatSuggestedPermissionRule(perm: PermissionDetails): string {

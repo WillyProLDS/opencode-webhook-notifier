@@ -243,17 +243,19 @@ All ntfy fields (`priority`, `tags`, `basicAuth`) are fully optional. A minimal 
 
 ### Interactive Permission Approvals
 
-When OpenCode requests tool or command permissions (`permission.ask`), the Telegram target renders structured permission details and interactive inline buttons:
+When OpenCode requests tool or command permissions (`permission.ask`), the Telegram target renders structured permission details, including the originating tool step and the assistant's preceding explanation of why that step is needed. When source context is unavailable, the notification falls back to the permission title, type, target, and configured event message.
 
 - **✅ Allow Once**: Approves the pending permission for this single invocation.
 - **🛡️ Allow Always**: Configures permanent allowance for matching patterns.
-- **❌ Reject**: Rejects the permission request.
+- **❌ Reject**: Opens a ForceReply prompt for optional guidance before rejecting the permission request. After the reply, the tool call is rejected and the guidance is sent to the same OpenCode session as its next prompt.
+- **Reject without guidance**: Rejects immediately from the updated permission keyboard without sending a follow-up prompt.
 
 **Key features:**
 - **Zero-friction Remote Control**: Resolve permissions from your phone or Telegram client without switching back to the terminal.
 - **Real-time Status Updates**: Once a button is clicked, the inline keyboard is removed and the message updates to display the review decision (e.g. `👉 審核結果：✅ 已允許本次執行 (Allow Once)`).
 - **Security & Authorization**: The Telegram poller verifies incoming callback queries against the configured `chatId`. Actions from unauthorized chats are rejected.
 - **Stale & Duplicate Protection**: If a permission was already resolved in the terminal or timed out, the bot informs the user and cleanly cleans up the message buttons.
+- **Guidance Retry**: If rejection succeeds but the follow-up prompt fails, Telegram retains the guidance state so a direct reply can retry delivery without rejecting the permission twice.
 
 ### Interactive Question Answers
 

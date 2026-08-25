@@ -4,13 +4,15 @@
 
 ### Added
 
+- **Permission Step and Purpose Context**: Telegram permission notifications resolve the originating tool call and display its step description plus the assistant's preceding explanation, with safe permission-summary fallbacks.
+- **Guided Telegram Permission Rejection**: Reject now opens a ForceReply prompt before resolving the permission, then submits the response to the same OpenCode session. Users can still reject without guidance, and failed guidance delivery can be retried without repeating the rejection.
 - **Structured Question Notifications**: Question events now include every prompt, option description, multiple-selection mode, and custom-answer mode across webhook targets and custom commands. Generic JSON payloads include the original structured question request.
 - **Interactive Telegram Question Answers**: Telegram can answer single-choice, multiple-choice, and ForceReply custom-text questions, reject requests, and submit the ordered answers directly to OpenCode.
 - **Question Retry and Isolation**: Pending questions are scoped by bot and chat, remain available for one hour, bypass webhook debouncing, and preserve completed answers when an OpenCode submission needs to be retried.
 
 ### Tests
 
-- Added focused coverage for structured question events, notification formatting, pending-state expiration, multiple Telegram chats, multi-question answers, ForceReply validation, API retry, and request rejection.
+- Added focused coverage for permission context enrichment, guided permission rejection ordering, structured question events, notification formatting, pending-state expiration, multiple Telegram chats, multi-question answers, ForceReply validation, API retry, and request rejection.
 
 ## 2.1.0 — 2026-08
 

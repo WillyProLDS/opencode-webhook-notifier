@@ -3,13 +3,25 @@ export interface PendingPermission {
   key: string;
   sessionID: string;
   permissionID: string;
+  botToken?: string;
+  chatID?: string | number;
+  notificationMessageID?: number;
+  notificationText?: string;
+  promptMessageID?: number;
+  rejected?: boolean;
+  guidance?: string;
   createdAt: number;
 }
 
 const pendingMap = new Map<string, PendingPermission>();
 let keyCounter = 1;
 
-export function registerPendingPermission(sessionID: string, permissionID: string): string {
+export function registerPendingPermission(
+  sessionID: string,
+  permissionID: string,
+  botToken?: string,
+  chatID?: string | number,
+): string {
   const now = Date.now();
   // Prune entries older than 1 hour
   for (const [k, v] of pendingMap.entries()) {
@@ -24,9 +36,28 @@ export function registerPendingPermission(sessionID: string, permissionID: strin
     key,
     sessionID,
     permissionID,
+    botToken,
+    chatID,
     createdAt: now,
   });
   return key;
+}
+
+export function findPendingPermissionByPrompt(
+  botToken: string,
+  chatID: string | number,
+  promptMessageID: number,
+): PendingPermission | undefined {
+  for (const pending of pendingMap.values()) {
+    if (
+      pending.botToken === botToken &&
+      String(pending.chatID) === String(chatID) &&
+      pending.promptMessageID === promptMessageID
+    ) {
+      return pending;
+    }
+  }
+  return undefined;
 }
 
 export function getPendingPermission(key: string): PendingPermission | undefined {

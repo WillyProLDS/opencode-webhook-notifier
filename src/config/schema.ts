@@ -106,6 +106,10 @@ export interface PermissionDetails {
   always?: string[] | null;
   metadata?: Record<string, unknown> | null;
   title?: string | null;
+  messageID?: string | null;
+  callID?: string | null;
+  step?: string | null;
+  purpose?: string | null;
 }
 
 export interface QuestionOption {

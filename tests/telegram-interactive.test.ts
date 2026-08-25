@@ -3,6 +3,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { NotifierConfig, PermissionDetails, TelegramTarget } from "../src/config/schema.js";
 import { formatPermissionSummary } from "../src/plugin/permission-helper.js";
 import { clearPendingPermissions, registerPendingPermission } from "../src/transport/pending-permissions.js";
+import {
+  clearPendingQuestions,
+  getPendingQuestion,
+  registerPendingQuestion,
+} from "../src/transport/pending-questions.js";
 import { formatPermissionTelegramText, sendTelegram } from "../src/transport/telegram.js";
 import { createTelegramReceiver } from "../src/transport/telegram-receiver.js";
 
@@ -50,12 +55,14 @@ describe("Telegram Permission Formatting & Inline Buttons", () => {
 
   beforeEach(() => {
     clearPendingPermissions();
+    clearPendingQuestions();
     originalFetch = globalThis.fetch;
   });
 
   afterEach(() => {
     globalThis.fetch = originalFetch;
     clearPendingPermissions();
+    clearPendingQuestions();
     vi.restoreAllMocks();
   });
 
@@ -104,6 +111,42 @@ describe("Telegram Permission Formatting & Inline Buttons", () => {
     expect(body.reply_markup.inline_keyboard[0][1].text).toContain("Allow Always");
     expect(body.reply_markup.inline_keyboard[1][0].text).toContain("Reject");
     expect(body.reply_markup.inline_keyboard[0][0].callback_data).toMatch(/^p:once:k_/);
+  });
+
+  it("sends question options and custom input as inline buttons", async () => {
+    const fetchMock = mockFetchOk();
+    globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch;
+
+    await sendTelegram(
+      { type: "telegram", botToken: "TEST_TOKEN", chatId: 12345 },
+      "OpenCode",
+      "Questions:\n1. Target: Where should this deploy?",
+      undefined,
+      undefined,
+      {
+        sessionID: "ses_abc",
+        question: {
+          id: "req_1",
+          sessionID: "ses_abc",
+          questions: [
+            {
+              header: "Target",
+              question: "Where should this deploy?",
+              options: [{ label: "Staging", description: "Use staging" }],
+            },
+          ],
+        },
+      },
+    );
+
+    const body = JSON.parse(fetchMock.mock.calls[0]![1].body as string);
+    const buttons = body.reply_markup.inline_keyboard.flat();
+    expect(buttons.map((button: { text: string }) => button.text)).toEqual([
+      "Staging",
+      "Custom answer",
+      "Reject request",
+    ]);
+    expect(buttons[0].callback_data).toMatch(/^q:o:q_/);
   });
 });
 
@@ -219,6 +262,7 @@ describe("Telegram Receiver (Long Polling & Callbacks)", () => {
 
     const receiver = createTelegramReceiver({
       client: clientMock as unknown as PluginInput["client"],
+      serverUrl: new URL("http://127.0.0.1:4096"),
       config: () => mockConfig,
       logger: loggerMock,
     });
@@ -305,6 +349,7 @@ describe("Telegram Receiver (Long Polling & Callbacks)", () => {
 
     const receiver = createTelegramReceiver({
       client: clientMock as unknown as PluginInput["client"],
+      serverUrl: new URL("http://127.0.0.1:4096"),
       config: () => mockConfig,
       logger: loggerMock,
     });
@@ -384,6 +429,7 @@ describe("Telegram Receiver (Long Polling & Callbacks)", () => {
 
     const receiver = createTelegramReceiver({
       client: clientMock as unknown as PluginInput["client"],
+      serverUrl: new URL("http://127.0.0.1:4096"),
       config: () => mockConfig,
       logger: loggerMock,
     });
@@ -397,5 +443,287 @@ describe("Telegram Receiver (Long Polling & Callbacks)", () => {
       expect.objectContaining({ status: 409 }),
     );
     expect(loggerMock.warn).not.toHaveBeenCalled();
+  });
+
+  it("collects single and multiple choices before replying to OpenCode", async () => {
+    const pending = registerPendingQuestion(
+      {
+        id: "req_multi",
+        sessionID: "ses_123",
+        questions: [
+          {
+            header: "Environment",
+            question: "Choose an environment",
+            options: [{ label: "Staging", description: "Use staging" }],
+          },
+          {
+            header: "Services",
+            question: "Choose services",
+            options: [
+              { label: "Web", description: "Deploy web" },
+              { label: "Worker", description: "Deploy worker" },
+            ],
+            multiple: true,
+          },
+        ],
+      },
+      "TEST_BOT_TOKEN",
+      67890,
+    );
+
+    let polls = 0;
+    let replyAttempts = 0;
+    const fetchMock = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      if (url.includes("/getUpdates")) {
+        polls++;
+        if (polls === 1) {
+          const callback = (id: string, data: string) => ({
+            update_id: Number(id.slice(2)),
+            callback_query: {
+              id,
+              data,
+              message: { message_id: 500, chat: { id: 67890 }, text: "Questions" },
+            },
+          });
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                ok: true,
+                result: [
+                  callback("cb1", `q:o:${pending.key}:0:0`),
+                  callback("cb2", `q:o:${pending.key}:1:0`),
+                  callback("cb3", `q:o:${pending.key}:1:1`),
+                  callback("cb4", `q:s:${pending.key}:1`),
+                  callback("cb5", `q:t:${pending.key}`),
+                ],
+              }),
+              { status: 200, headers: { "Content-Type": "application/json" } },
+            ),
+          );
+        }
+        return new Promise((_, reject) => {
+          init?.signal?.addEventListener("abort", () =>
+            reject(Object.assign(new Error("AbortError"), { name: "AbortError" })),
+          );
+        });
+      }
+      if (url.includes("/question/req_multi/reply")) {
+        replyAttempts++;
+        if (replyAttempts === 1) {
+          return Promise.resolve(new Response("failed", { status: 500, statusText: "Server Error" }));
+        }
+      }
+      return Promise.resolve(
+        new Response(JSON.stringify({ ok: true, result: { message_id: 701 } }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+    });
+    globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch;
+
+    const receiver = createTelegramReceiver({
+      client: {} as PluginInput["client"],
+      serverUrl: new URL("http://127.0.0.1:4096"),
+      config: () =>
+        ({
+          timeout: 5,
+          webhook: {
+            enabled: true,
+            targets: [
+              { type: "telegram", botToken: "TEST_BOT_TOKEN", chatId: 12345 },
+              { type: "telegram", botToken: "TEST_BOT_TOKEN", chatId: 67890 },
+            ],
+          },
+        }) as NotifierConfig,
+      logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+    });
+
+    receiver.start();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    receiver.stop();
+
+    const replyCalls = fetchMock.mock.calls.filter(([url]) => String(url).includes("/question/req_multi/reply"));
+    expect(replyCalls).toHaveLength(2);
+    expect(JSON.parse(replyCalls[1]![1].body as string)).toEqual({ answers: [["Staging"], ["Web", "Worker"]] });
+  });
+
+  it("accepts custom text only as a reply to the force-reply prompt", async () => {
+    const pending = registerPendingQuestion(
+      {
+        id: "req_custom",
+        sessionID: "ses_123",
+        questions: [
+          {
+            header: "Version",
+            question: "Which version?",
+            options: [],
+          },
+        ],
+      },
+      "TEST_BOT_TOKEN",
+      12345,
+    );
+
+    let polls = 0;
+    const fetchMock = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      if (url.includes("/getUpdates")) {
+        polls++;
+        if (polls === 1) {
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                ok: true,
+                result: [
+                  {
+                    update_id: 1,
+                    callback_query: {
+                      id: "cb1",
+                      data: `q:c:${pending.key}:0`,
+                      message: { message_id: 500, chat: { id: 12345 }, text: "Questions" },
+                    },
+                  },
+                  {
+                    update_id: 2,
+                    message: {
+                      message_id: 701,
+                      chat: { id: 12345 },
+                      text: "ignore ordinary text",
+                    },
+                  },
+                  {
+                    update_id: 3,
+                    message: {
+                      message_id: 702,
+                      chat: { id: 12345 },
+                      text: "ignore wrong reply",
+                      reply_to_message: { message_id: 699 },
+                    },
+                  },
+                  {
+                    update_id: 4,
+                    message: {
+                      message_id: 703,
+                      chat: { id: 12345 },
+                      text: "v2.2.0",
+                      reply_to_message: { message_id: 700 },
+                    },
+                  },
+                ],
+              }),
+              { status: 200, headers: { "Content-Type": "application/json" } },
+            ),
+          );
+        }
+        return new Promise((_, reject) => {
+          init?.signal?.addEventListener("abort", () =>
+            reject(Object.assign(new Error("AbortError"), { name: "AbortError" })),
+          );
+        });
+      }
+      const body = init?.body ? JSON.parse(init.body as string) : {};
+      const messageID = body.reply_markup?.force_reply ? 700 : 701;
+      return Promise.resolve(
+        new Response(JSON.stringify({ ok: true, result: { message_id: messageID } }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+    });
+    globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch;
+
+    const receiver = createTelegramReceiver({
+      client: {} as PluginInput["client"],
+      serverUrl: new URL("http://127.0.0.1:4096"),
+      config: () =>
+        ({
+          timeout: 5,
+          webhook: {
+            enabled: true,
+            targets: [{ type: "telegram", botToken: "TEST_BOT_TOKEN", chatId: 12345 }],
+          },
+        }) as NotifierConfig,
+      logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+    });
+
+    receiver.start();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    receiver.stop();
+
+    const replyCall = fetchMock.mock.calls.find(([url]) => String(url).includes("/question/req_custom/reply"));
+    expect(replyCall).toBeDefined();
+    expect(JSON.parse(replyCall![1].body as string)).toEqual({ answers: [["v2.2.0"]] });
+  });
+
+  it("rejects a complete question request through OpenCode", async () => {
+    const pending = registerPendingQuestion(
+      {
+        id: "req_reject",
+        sessionID: "ses_123",
+        questions: [{ header: "Deploy", question: "Proceed?", options: [] }],
+      },
+      "TEST_BOT_TOKEN",
+      12345,
+    );
+
+    let polls = 0;
+    const fetchMock = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      if (url.includes("/getUpdates")) {
+        polls++;
+        if (polls === 1) {
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                ok: true,
+                result: [
+                  {
+                    update_id: 1,
+                    callback_query: {
+                      id: "cb1",
+                      data: `q:r:${pending.key}`,
+                      message: { message_id: 500, chat: { id: 12345 }, text: "Questions" },
+                    },
+                  },
+                ],
+              }),
+              { status: 200, headers: { "Content-Type": "application/json" } },
+            ),
+          );
+        }
+        return new Promise((_, reject) => {
+          init?.signal?.addEventListener("abort", () =>
+            reject(Object.assign(new Error("AbortError"), { name: "AbortError" })),
+          );
+        });
+      }
+      return Promise.resolve(
+        new Response(JSON.stringify({ ok: true, result: {} }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+    });
+    globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch;
+
+    const receiver = createTelegramReceiver({
+      client: {} as PluginInput["client"],
+      serverUrl: new URL("http://127.0.0.1:4096"),
+      config: () =>
+        ({
+          timeout: 5,
+          webhook: {
+            enabled: true,
+            targets: [{ type: "telegram", botToken: "TEST_BOT_TOKEN", chatId: 12345 }],
+          },
+        }) as NotifierConfig,
+      logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+    });
+
+    receiver.start();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    receiver.stop();
+
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/question/req_reject/reject"))).toBe(true);
+    expect(getPendingQuestion(pending.key)).toBeUndefined();
   });
 });

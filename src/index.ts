@@ -11,12 +11,13 @@ import { createPermissionDedupe } from "./plugin/permission-dedupe.js";
 import { extractPermissionDetails } from "./plugin/permission-helper.js";
 import { createSessionState } from "./plugin/session-state.js";
 import { createTurnCounter } from "./plugin/turn-counter.js";
+import { prunePendingQuestions } from "./transport/pending-questions.js";
 import { createWebhookSender } from "./transport/send.js";
 import { createTelegramReceiver } from "./transport/telegram-receiver.js";
 
 const MEMORY_CLEANUP_INTERVAL_MS = 5 * 60 * 1000;
 
-export const WebhookNotifierPlugin: Plugin = async ({ client, directory }) => {
+export const WebhookNotifierPlugin: Plugin = async ({ client, directory, serverUrl }) => {
   const logger = createLogger();
   const lifecycle = createLifecycle();
   const configService = createConfigService({ logger });
@@ -36,6 +37,7 @@ export const WebhookNotifierPlugin: Plugin = async ({ client, directory }) => {
   const webhookSender = createWebhookSender({ logger, timeoutMs: initialConfig.timeout * 1000 });
   const telegramReceiver = createTelegramReceiver({
     client,
+    serverUrl,
     config: () => configService.get(),
     logger,
   });
@@ -74,6 +76,7 @@ export const WebhookNotifierPlugin: Plugin = async ({ client, directory }) => {
     const cutoff = Date.now() - MEMORY_CLEANUP_INTERVAL_MS;
     sessionState.pruneOlderThan(cutoff);
     permissionDedupe.prune(cutoff);
+    prunePendingQuestions();
   }, MEMORY_CLEANUP_INTERVAL_MS);
   cleanupInterval.unref?.();
   lifecycle.register(() => clearInterval(cleanupInterval));

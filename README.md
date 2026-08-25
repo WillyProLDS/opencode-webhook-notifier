@@ -326,6 +326,34 @@ To avoid polluting the OpenCode terminal interface while debugging, you can dire
 OPENCODE_WEBHOOK_NOTIFIER_LOG=debug OPENCODE_WEBHOOK_NOTIFIER_LOG_FILE=/tmp/opencode-notifier.log opencode
 ```
 
+For per-project debug logs, add this zsh wrapper to `~/.oh-my-zsh/custom/aliases.zsh`:
+
+```zsh
+_opencode_with_plugin_log() {
+  local project_path="${PWD:A}"
+  local started_at="$(date +%Y%m%d-%H%M%S)"
+  local log_file="/tmp/opencode-webhook-notifier${project_path}/${started_at}-$$-${RANDOM}.log"
+
+  GOOGLE_CLOUD_PROJECT=aiops-338206 \
+    VERTEX_LOCATION=global \
+    OPENCODE_WEBHOOK_NOTIFIER_LOG=debug \
+    OPENCODE_WEBHOOK_NOTIFIER_LOG_FILE="$log_file" \
+    command opencode "$@"
+}
+
+alias oc='_opencode_with_plugin_log'
+alias occ='_opencode_with_plugin_log -c'
+alias ocsp='OPENCODE_CONFIG="$HOME/configs/opencode/opencode_with_sp.json" _opencode_with_plugin_log'
+```
+
+Each launch creates a separate log file under a directory that mirrors the absolute project path. For example, launching OpenCode from `/Users/example/my-project` writes to:
+
+```text
+/tmp/opencode-webhook-notifier/Users/example/my-project/<timestamp>-<shell-pid>-<random>.log
+```
+
+The plugin writes directly to this file instead of redirecting OpenCode stdout or stderr, so the TUI remains intact. Run `source ~/.oh-my-zsh/custom/aliases.zsh` after changing the aliases.
+
 ## Focus Detection
 
 When `suppressWhenFocused` is `true`, notifications are skipped if the terminal is the active window. Full platform support:
@@ -343,7 +371,20 @@ When `suppressWhenFocused` is `true`, notifications are skipped if the terminal 
 2. Verify `webhook.targets` has at least one target with valid `type` and `url`
 3. Check the event is enabled in `events` (e.g. `events.permission.webhook: true`)
 4. Check `suppressWhenFocused` — move focus away from terminal to test
-5. Look for `[webhook-notifier]` errors in OpenCode logs
+5. Check whether debug file logging was enabled when OpenCode started
+6. Inspect the newest `.log` file under `/tmp/opencode-webhook-notifier<absolute-project-path>/`
+
+### Collecting debug logs
+
+Before investigating plugin behavior, confirm whether OpenCode was started with both `OPENCODE_WEBHOOK_NOTIFIER_LOG=debug` and `OPENCODE_WEBHOOK_NOTIFIER_LOG_FILE`, or through the `oc`, `occ`, or `ocsp` wrapper above. Environment variables are captured at startup, so restart OpenCode after enabling them.
+
+For a project at `/Users/example/my-project`, list its debug logs with:
+
+```bash
+ls -lt /tmp/opencode-webhook-notifier/Users/example/my-project/
+```
+
+Start with the newest log from the affected OpenCode launch. If the directory does not exist, file logging was not active for that project or the plugin did not initialize.
 
 ### Webhook fails with 401/403
 

@@ -80,10 +80,13 @@ export async function enrichPermissionDetails(
     const toolPart = toolIndex >= 0 ? parts[toolIndex] : undefined;
     const input =
       toolPart?.type === "tool" && toolPart.state && "input" in toolPart.state ? toolPart.state.input : undefined;
+    const toolInput = input && typeof input === "object" ? (input as Record<string, unknown>) : null;
+    const description = typeof toolInput?.description === "string" ? toolInput.description.trim() : null;
+    const command = typeof toolInput?.command === "string" ? toolInput.command.trim() : null;
     const step =
-      input && typeof input === "object" && typeof input.description === "string" && input.description.trim().length > 0
-        ? input.description.trim()
-        : permission.title;
+      description && !isToolEcho(description, permission.permission, command)
+        ? description
+        : summarizeCommand(permission.permission, command);
 
     const purposeParts = (toolIndex >= 0 ? parts.slice(0, toolIndex) : parts).filter(
       (part) => part.type === "text" && !part.synthetic && part.text.trim().length > 0,
@@ -91,10 +94,28 @@ export async function enrichPermissionDetails(
     const purposePart = purposeParts.at(-1);
     const purpose = purposePart?.type === "text" ? purposePart.text.trim() : null;
 
-    return { ...permission, step: step ?? null, purpose };
+    return { ...permission, step: step ?? null, purpose: purpose && purpose !== step ? purpose : null };
   } catch {
     return permission;
   }
+}
+
+function isToolEcho(description: string, tool: string | null | undefined, command: string | null): boolean {
+  if (!tool || !command) return false;
+  return description.trim().toLowerCase() === `${tool}: ${command}`.toLowerCase();
+}
+
+function summarizeCommand(tool: string | null | undefined, command: string | null): string | null {
+  if (tool !== "bash" || !command || !/(?:^|\s)git\s+commit(?:\s|$)/.test(command)) return null;
+
+  const messages = Array.from(command.matchAll(/(?:^|\s)-m\s+(?:"([^"]*)"|'([^']*)'|(\S+))/g))
+    .map((match) => match[1] ?? match[2] ?? match[3] ?? "")
+    .filter((message) => message.length > 0);
+  const [subject, body] = messages;
+  if (!subject) return "Create Git commit";
+
+  const summary = body?.replace(/\s+/g, " ").trim();
+  return summary ? `Create commit "${subject}": ${summary}` : `Create commit "${subject}"`;
 }
 
 export function formatSuggestedPermissionRule(perm: PermissionDetails): string {

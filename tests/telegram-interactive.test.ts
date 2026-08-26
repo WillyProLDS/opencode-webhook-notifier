@@ -72,6 +72,62 @@ describe("Permission Helper", () => {
     );
   });
 
+  it("replaces an echoed bash description with the Git commit intent", async () => {
+    const command =
+      'git commit -m "feat(slack): route workspace events through typed ingress" -m "Centralize Slack event handling in one typed ingress workflow."';
+    const message = vi.fn().mockResolvedValue({
+      data: {
+        parts: [
+          {
+            id: "part_1",
+            type: "tool",
+            callID: "call_1",
+            state: { status: "running", input: { description: `bash: ${command}`, command } },
+          },
+        ],
+      },
+    });
+
+    const details = await enrichPermissionDetails(
+      { session: { message } } as unknown as PluginInput["client"],
+      "ses_1",
+      { id: "p_1", permission: "bash", messageID: "msg_1", callID: "call_1" },
+    );
+
+    expect(details).toEqual(
+      expect.objectContaining({
+        step: 'Create commit "feat(slack): route workspace events through typed ingress": Centralize Slack event handling in one typed ingress workflow.',
+        purpose: null,
+      }),
+    );
+  });
+
+  it("keeps a semantic tool description", async () => {
+    const message = vi.fn().mockResolvedValue({
+      data: {
+        parts: [
+          {
+            id: "part_1",
+            type: "tool",
+            callID: "call_1",
+            state: {
+              status: "running",
+              input: { description: "Run the focused verification tests", command: "npm test" },
+            },
+          },
+        ],
+      },
+    });
+
+    const details = await enrichPermissionDetails(
+      { session: { message } } as unknown as PluginInput["client"],
+      "ses_1",
+      { id: "p_1", permission: "bash", messageID: "msg_1", callID: "call_1" },
+    );
+
+    expect(details).toEqual(expect.objectContaining({ step: "Run the focused verification tests" }));
+  });
+
   it("formats permission summary and rule for bash command", () => {
     const perm: PermissionDetails = {
       id: "p_1",
@@ -132,6 +188,17 @@ describe("Telegram Permission Formatting & Inline Buttons", () => {
     expect(text).toContain("Allow Always Rule");
     expect(text).toContain("Checks the repository status");
     expect(text).toContain("Confirm only intended files changed");
+  });
+
+  it("omits empty step and purpose instead of repeating the target", () => {
+    const text = formatPermissionTelegramText("OpenCode (ist-n8n)", "Session needs permission", {
+      permission: "bash",
+      patterns: ["git status"],
+    });
+
+    expect(text).not.toContain("執行步驟");
+    expect(text).not.toContain("目的 (Purpose)");
+    expect(text).toContain("git status");
   });
 
   it("sends inline keyboard buttons when permission has id and sessionID", async () => {
